@@ -20,6 +20,8 @@
   const F0 = 1800, F1 = 4400;            // chirp sweep, Hz
   const CHIRP_MS = 150, PERIOD_MS = 400, COUNT = 10;
   const BAND = [2000, 4200], STEP_HZ = 20, SMOOTH_HZ = 50;
+  // Chirps must stand 10 dB above the room, and agree within 3 dB.
+  const MIN_SNR_DB = 10, MAX_SPREAD_DB = 3;
 
   /** Linear chirp F0→F1 with 5 ms raised-cosine fades, peak 1. */
   function chirp(sampleRate, { f0 = F0, f1 = F1, ms = CHIRP_MS } = {}) {
@@ -151,15 +153,20 @@
   function analyzeEcho(rec, sampleRate, opts = {}) {
     const { count = COUNT, periodMs = PERIOD_MS } = opts;
     const tpl = chirp(sampleRate, opts);
-    const retake = (problem, extra = {}) => ({ verdict: 'retake', problem, chirpsHeard: 0, expected: count, ...extra });
+    const levels = micLevels(rec, sampleRate);
+    const retake = (code, problem, extra = {}) => ({ verdict: 'retake', code, problem, chirpsHeard: 0, expected: count, ...levels, ...extra });
+
+    if (levels.peakDb < -70) {
+      return retake('silent', 'The microphone recorded silence. Close other apps that use the microphone (calls, voice recorder), allow the microphone for this page, and try again.');
+    }
 
     let clipped = 0;
     for (let i = 0; i < rec.length; i++) if (Math.abs(rec[i]) >= 0.99) clipped++;
-    if (clipped > rec.length * 0.001) return retake('The sound was too loud for the microphone. Turn the phone volume down a little and try again.');
+    if (clipped > rec.length * 0.001) return retake('clipped', 'The sound was too loud for the microphone. Turn the phone volume down a little and try again.');
 
     const starts = findChirps(rec, tpl, sampleRate, { periodMs, count }).filter((s) => s + tpl.length + sampleRate * 0.01 <= rec.length);
     if (starts.length < Math.ceil(count * 0.7)) {
-      return retake('The microphone did not hear the chirps clearly. Check the cone covers the speaker and microphone, turn the volume up to about half, and try in a quiet room.', { chirpsHeard: starts.length });
+      return retake('not-heard', 'The microphone heard sound but not the chirps clearly. Turn the media volume up, make sure no Bluetooth earphones are connected, and check the cone covers both the speaker and the microphone.', { chirpsHeard: starts.length });
     }
 
     // Loudness of the chirps against the room noise between them.
@@ -171,7 +178,7 @@
       if (b - a > gapPad && b <= rec.length) { noise += meanSquare(rec, a, b); gaps++; }
     }
     const snrDb = 10 * Math.log10((sig / starts.length) / Math.max(gaps ? noise / gaps : 1e-12, 1e-12));
-    if (snrDb < 15) return retake('The room was too noisy compared with the chirps. Try somewhere quieter.', { chirpsHeard: starts.length, snrDb });
+    if (snrDb < MIN_SNR_DB) return retake('noisy', 'The room was too noisy compared with the chirps. Try somewhere quieter, or turn the volume up a little.', { chirpsHeard: starts.length, snrDb });
 
     const freqs = [];
     for (let f = BAND[0]; f <= BAND[1]; f += STEP_HZ) freqs.push(f);
@@ -185,17 +192,50 @@
       return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / xs.length);
     });
     const consistencyDb = spread.reduce((a, b) => a + b, 0) / spread.length;
-    if (consistencyDb > 3) {
-      return retake('The echo changed between chirps, which usually means the cone moved. Hold it gently in place and keep still.', { chirpsHeard: starts.length, snrDb, consistencyDb });
+    if (consistencyDb > MAX_SPREAD_DB) {
+      return retake('moved', 'The echo changed between chirps, which usually means the cone moved. Hold it gently in place and keep still.', { chirpsHeard: starts.length, snrDb, consistencyDb });
     }
 
     const mean = med.reduce((a, b) => a + b, 0) / med.length;
     const db = med.map((v) => v - mean);
     return {
       verdict: 'ok', freqs, db, dip: deepestDip(freqs, db),
-      chirpsHeard: starts.length, expected: count, snrDb, consistencyDb,
+      chirpsHeard: starts.length, expected: count, snrDb, consistencyDb, ...levels,
     };
   }
 
-  return { F0, F1, CHIRP_MS, PERIOD_MS, COUNT, BAND, chirp, fft, correlate, findChirps, deepestDip, analyzeEcho };
+  /** Loudest moment and typical background level, in dB below full scale. */
+  function micLevels(rec, sampleRate) {
+    let peak = 0;
+    for (let i = 0; i < rec.length; i++) { const v = Math.abs(rec[i]); if (v > peak) peak = v; }
+    const block = Math.max(1, Math.round(sampleRate * 0.02)), rms = [];
+    for (let i = 0; i + block <= rec.length; i += block) rms.push(Math.sqrt(meanSquare(rec, i, i + block)));
+    rms.sort((a, b) => a - b);
+    // The quietest fifth of the recording is the room between chirps.
+    const room = rms.length ? rms[Math.floor(rms.length * 0.2)] : 0;
+    const db = (v) => 20 * Math.log10(Math.max(v, 1e-6));
+    return { peakDb: db(peak), roomDb: db(room) };
+  }
+
+  /** 16-bit mono WAV of samples, for playing through an <audio> element. */
+  function wav(samples, sampleRate) {
+    const data = new DataView(new ArrayBuffer(44 + samples.length * 2));
+    const text = (at, t) => { for (let i = 0; i < t.length; i++) data.setUint8(at + i, t.charCodeAt(i)); };
+    text(0, 'RIFF'); data.setUint32(4, 36 + samples.length * 2, true); text(8, 'WAVE'); text(12, 'fmt ');
+    data.setUint32(16, 16, true); data.setUint16(20, 1, true); data.setUint16(22, 1, true);
+    data.setUint32(24, sampleRate, true); data.setUint32(28, sampleRate * 2, true);
+    data.setUint16(32, 2, true); data.setUint16(34, 16, true); text(36, 'data'); data.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) data.setInt16(44 + i * 2, Math.max(-1, Math.min(1, samples[i])) * 32767, true);
+    return data.buffer;
+  }
+
+  /** The whole chirp sequence as one signal: leadS of silence, COUNT chirps, tailS. */
+  function sequence(sampleRate, { level = 0.8, leadS = 0.6, tailS = 0.5, count = COUNT, periodMs = PERIOD_MS } = {}) {
+    const tpl = chirp(sampleRate), period = Math.round(sampleRate * periodMs / 1000), lead = Math.round(sampleRate * leadS);
+    const out = new Float32Array(lead + (count - 1) * period + tpl.length + Math.round(sampleRate * tailS));
+    for (let k = 0; k < count; k++) for (let i = 0; i < tpl.length; i++) out[lead + k * period + i] = level * tpl[i];
+    return out;
+  }
+
+  return { F0, F1, CHIRP_MS, PERIOD_MS, COUNT, BAND, chirp, fft, correlate, findChirps, deepestDip, analyzeEcho, micLevels, wav, sequence };
 });

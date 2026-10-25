@@ -117,6 +117,11 @@
   .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .sides button[aria-checked="true"] { background: var(--accent); color: var(--accent-ink); }
   a.filebtn { text-decoration: none; }
+  .meter { display: grid; gap: 4px; }
+  .meter .bar { position: relative; height: 14px; background: var(--line); border-radius: 99px; overflow: hidden; }
+  .meter .bar i { position: absolute; inset: 0 auto 0 0; width: 0%; background: var(--accent); transition: width .08s linear; }
+  .meter .bar b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--trace); left: 0%; }
+  .meter .fine { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
   .tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; padding: 4px; background: var(--line); border-radius: 12px; }
   .tabs button { border: 0; background: transparent; color: var(--muted); padding: 10px 8px; font-size: 15px; }
   .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
@@ -298,10 +303,17 @@
       </div>
       <div class="status" id="earStatus">Check how the eardrum echoes sound, with a paper cone and 5 seconds of chirps.</div>
       <div class="progress" id="earProgressWrap" hidden><i id="earProgress"></i></div>
+      <div class="meter" id="micMeter" hidden aria-live="off">
+        <div class="bar" role="meter" aria-label="Microphone level" aria-valuemin="-80" aria-valuemax="0" id="micBar"><i id="micNow"></i><b id="micPeak"></b></div>
+        <div class="fine"><span id="micText">Microphone: --</span><span id="micHint"></span></div>
+      </div>
       <div class="notice" id="earNotice" hidden></div>
       <div class="actions" id="earActions">
         <button class="primary" id="earBtn" type="button">Start ear check</button>
         <a class="filebtn" id="coneLink" download="jeevaflow-ear-cone.svg" href="#">Download paper cone</a>
+      </div>
+      <div class="actions" id="earRunActions" hidden>
+        <button class="quiet" id="earCancel" type="button">Stop</button>
       </div>
       <div class="actions" id="earResult" hidden>
         <button class="primary" id="earSave" type="button">Save check</button>
@@ -810,7 +822,7 @@
   }
 
   // --------------------------------------------------------------- ear echo
-  const EAR_KEY = 'jf.ear.readings', EAR_LEVEL = 0.3;
+  const EAR_KEY = 'jf.ear.readings';
   let earRun = null, earSide = 'left', earLast = null;
 
   function earStatus(text) { $('earStatus').textContent = text; }
@@ -823,6 +835,8 @@
     $('earActions').hidden = phase !== 'idle';
     $('earResult').hidden = phase !== 'result';
     $('earProgressWrap').hidden = phase !== 'running';
+    $('earRunActions').hidden = phase !== 'running';
+    $('micMeter').hidden = phase !== 'running';
     $('sideLeft').disabled = $('sideRight').disabled = phase === 'running';
   }
   function setSide(side) {
@@ -899,26 +913,45 @@
     $('chirps').textContent = `${r.chirpsHeard}/${r.expected}`;
     $('snr').innerHTML = r.snrDb == null ? '--<span>dB</span>' : `${Math.round(r.snrDb)}<span>dB</span>`;
     const meta = $('earMeta'); meta.innerHTML = '';
+    const add = (text) => { const s = document.createElement('span'); s.textContent = text; meta.append(s); };
     if (r.verdict !== 'ok') {
       $('dipDb').textContent = '--'; $('dipHz').textContent = 'at -- kHz';
-      const s = document.createElement('span'); s.textContent = 'No echo curve this time'; meta.append(s);
-      return;
+      add('No echo curve this time');
+    } else {
+      $('dipDb').textContent = r.dip.depthDb.toFixed(1);
+      $('dipHz').textContent = r.dip.depthDb >= 1 ? `at ${(r.dip.hz / 1000).toFixed(2)} kHz` : 'no clear dip';
+      add(`${r.side === 'left' ? 'Left' : 'Right'} ear`);
+      add(`Chirps agreed within ${r.consistencyDb.toFixed(1)} dB`);
     }
-    $('dipDb').textContent = r.dip.depthDb.toFixed(1);
-    $('dipHz').textContent = r.dip.depthDb >= 1 ? `at ${(r.dip.hz / 1000).toFixed(2)} kHz` : 'no clear dip';
-    for (const text of [`${r.side === 'left' ? 'Left' : 'Right'} ear`, `Chirps agreed within ${r.consistencyDb.toFixed(1)} dB`]) {
-      const s = document.createElement('span'); s.textContent = text; meta.append(s);
-    }
+    // What the microphone heard, so a failed check can be understood.
+    if (r.peakDb != null) add(`Loudest sound ${Math.round(r.peakDb)} dB · room ${Math.round(r.roomDb)} dB`);
+    if (r.via) add(r.attempts > 1 ? `Took ${r.attempts} tries (${r.via === 'element' ? 'media player' : 'louder'})` : 'First try');
   }
+
+  // Microphone level in dB below full scale, mapped onto the meter bar.
+  const levelPct = (db) => Math.max(0, Math.min(100, (db + 80) / 80 * 100));
+  const dbOf = (v) => 20 * Math.log10(Math.max(v, 1e-6));
+
+  /**
+   * Ways to play the chirps, tried in order until the microphone hears
+   * them. Some Android phones route Web Audio to the quiet earpiece once
+   * the microphone is open; an <audio> element often still plays on the
+   * loudspeaker.
+   */
+  const EAR_TRIES = [
+    { via: 'webaudio', level: 0.35 },
+    { via: 'webaudio', level: 0.9 },
+    { via: 'element', level: 0.9 },
+  ];
 
   async function startEar() {
     earNotice('');
-    // Created inside the tap so phones allow sound.
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       earNotice('This browser cannot play and record sound here. Open the page in Chrome or Safari over https.');
       return;
     }
+    // Created inside the tap so phones allow sound.
     const ctx = new Ctx();
     let stream;
     try {
@@ -935,66 +968,114 @@
     }
     try { await ctx.resume(); } catch { /* resumes on its own */ }
 
-    const sr = ctx.sampleRate, chunks = [];
+    const sr = ctx.sampleRate, side = earSide;
     const src = ctx.createMediaStreamSource(stream);
-    const rec = ctx.createScriptProcessor(4096, 1, 1);
-    rec.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-    src.connect(rec); rec.connect(ctx.destination);   // outputs silence; needed for it to run
+    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    let sink = null, now = 0, peak = 0;
+    proc.onaudioprocess = (e) => {
+      const d = e.inputBuffer.getChannelData(0);
+      let sum = 0, top = 0;
+      for (let i = 0; i < d.length; i++) { sum += d[i] * d[i]; const a = Math.abs(d[i]); if (a > top) top = a; }
+      now = Math.sqrt(sum / d.length); peak = Math.max(peak * 0.97, top);
+      if (sink) sink.push(new Float32Array(d));
+    };
+    src.connect(proc); proc.connect(ctx.destination);   // outputs silence; needed for it to run
 
-    const tpl = Ear.chirp(sr), buf = ctx.createBuffer(1, tpl.length, sr);
-    buf.getChannelData(0).set(tpl);
-    const gain = ctx.createGain(); gain.gain.value = EAR_LEVEL; gain.connect(ctx.destination);
-    const lead = 0.6, total = lead + Ear.COUNT * Ear.PERIOD_MS / 1000 + 0.5;
-    const t0 = ctx.currentTime + lead, sources = [];
-    for (let k = 0; k < Ear.COUNT; k++) {
-      const s = ctx.createBufferSource(); s.buffer = buf; s.connect(gain); s.start(t0 + k * Ear.PERIOD_MS / 1000); sources.push(s);
-    }
+    let cancelled = false, playing = [], player = null, frame = 0;
+    const meter = () => {
+      if (cancelled) return;
+      const db = dbOf(now), pk = dbOf(peak);
+      $('micNow').style.width = `${levelPct(db)}%`;
+      $('micPeak').style.left = `${levelPct(pk)}%`;
+      $('micBar').setAttribute('aria-valuenow', String(Math.round(db)));
+      $('micText').textContent = `Microphone: ${Math.round(db)} dB now, ${Math.round(pk)} dB loudest`;
+      $('micHint').textContent = pk < -70 ? 'hearing nothing' : pk < -40 ? 'very quiet' : pk > -1 ? 'too loud' : 'hearing sound';
+      frame = requestAnimationFrame(meter);
+    };
+    meter();
 
-    const side = earSide;
-    earPhase('running');
-    earStatus(`Chirping into the ${side} ear. Keep still…`);
-    const began = performance.now();
-    const timer = setInterval(() => { $('earProgress').style.width = `${Math.min(1, (performance.now() - began) / 1000 / total) * 100}%`; }, 100);
-
+    const silenceMedia = () => {
+      playing.forEach((n) => { try { n.stop(); } catch { /* already stopped */ } });
+      playing = [];
+      if (player) { player.pause(); URL.revokeObjectURL(player.src); player = null; }
+    };
     const teardown = () => {
-      clearInterval(timer);
-      sources.forEach((s) => { try { s.stop(); } catch { /* already stopped */ } });
-      rec.onaudioprocess = null;
-      try { src.disconnect(); rec.disconnect(); } catch { /* already disconnected */ }
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      silenceMedia();
+      proc.onaudioprocess = null;
+      try { src.disconnect(); proc.disconnect(); } catch { /* already disconnected */ }
       stream.getTracks().forEach((t) => t.stop());
       ctx.close().catch(() => {});
       earRun = null;
     };
-    const done = setTimeout(() => {
-      teardown();
-      const n = chunks.reduce((a, c) => a + c.length, 0), all = new Float32Array(n);
-      let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
-      earStatus('Working out the echo…');
-      setTimeout(() => {
-        const r = Object.assign(Ear.analyzeEcho(all, sr), { side });
-        earLast = r.verdict === 'ok' ? r : null;
-        showEcho(r);
-        drawEcho();
-        if (r.verdict === 'ok') {
-          earPhase('result');
-          $('earSave').disabled = false; $('earSave').textContent = 'Save check';
-          earStatus(r.dip.depthDb >= 1
-            ? `Echo recorded: the deepest dip is ${r.dip.depthDb.toFixed(1)} dB at ${(r.dip.hz / 1000).toFixed(2)} kHz.`
-            : 'Echo recorded: the curve has no clear dip.');
-        } else {
-          earPhase('idle');
-          earStatus('No echo curve this time.');
-          earNotice(r.problem);
-        }
-      }, 30);
-    }, total * 1000);
-
     earRun = {
       cancel(message) {
-        clearTimeout(done); teardown(); earPhase('idle'); earStatus('Stopped. Start again when you are ready.');
+        teardown(); earPhase('idle'); earStatus('Stopped. Start again when you are ready.');
         if (message) earNotice(message);
       },
     };
+
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const seq = (level) => Ear.sequence(sr, { level });
+
+    /** Plays the chirps one way and returns what the microphone recorded. */
+    async function recordOnce({ via, level }) {
+      const signal = seq(level);
+      sink = [];
+      if (via === 'webaudio') {
+        const buf = ctx.createBuffer(1, signal.length, sr);
+        buf.getChannelData(0).set(signal);
+        const node = ctx.createBufferSource(); node.buffer = buf; node.connect(ctx.destination);
+        node.start(ctx.currentTime + 0.05); playing.push(node);
+      } else {
+        player = new Audio(URL.createObjectURL(new Blob([Ear.wav(signal, sr)], { type: 'audio/wav' })));
+        try { await player.play(); } catch { /* reported as not heard */ }
+      }
+      const seconds = signal.length / sr + (via === 'element' ? 0.8 : 0.3);
+      const began = performance.now();
+      while (!cancelled && performance.now() - began < seconds * 1000) {
+        $('earProgress').style.width = `${Math.min(1, (performance.now() - began) / 1000 / seconds) * 100}%`;
+        await wait(100);
+      }
+      silenceMedia();
+      const chunks = sink; sink = null;
+      const all = new Float32Array(chunks.reduce((a, c) => a + c.length, 0));
+      let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
+      return all;
+    }
+
+    earPhase('running');
+    let r = null, tries = 0;
+    for (const attempt of EAR_TRIES) {
+      tries++;
+      earStatus(tries === 1
+        ? `Chirping into the ${side} ear. Keep still…`
+        : `Didn't hear the chirps clearly. Trying again ${attempt.via === 'element' ? 'another way' : 'louder'} (${tries} of ${EAR_TRIES.length})…`);
+      const rec = await recordOnce(attempt);
+      if (cancelled) return;
+      r = Object.assign(Ear.analyzeEcho(rec, sr), { side, via: attempt.via, attempts: tries });
+      // Only "not heard" is helped by playing louder or another way.
+      if (r.verdict === 'ok' || r.code !== 'not-heard') break;
+    }
+    teardown();
+
+    earLast = r.verdict === 'ok' ? r : null;
+    showEcho(r);
+    drawEcho();
+    if (r.verdict === 'ok') {
+      earPhase('result');
+      $('earSave').disabled = false; $('earSave').textContent = 'Save check';
+      earStatus(r.dip.depthDb >= 1
+        ? `Echo recorded: the deepest dip is ${r.dip.depthDb.toFixed(1)} dB at ${(r.dip.hz / 1000).toFixed(2)} kHz.`
+        : 'Echo recorded: the curve has no clear dip.');
+    } else {
+      earPhase('idle');
+      earStatus('No echo curve this time.');
+      earNotice(r.code === 'not-heard'
+        ? `${r.problem} Tried ${tries} ways. Tip: press the volume-up button while it chirps; some phones use the call volume when the microphone is on.`
+        : r.problem);
+    }
   }
 
   function renderEarHistory() {
@@ -1036,6 +1117,7 @@
   $('sideLeft').addEventListener('click', () => setSide('left'));
   $('sideRight').addEventListener('click', () => setSide('right'));
   $('earBtn').addEventListener('click', startEar);
+  $('earCancel').addEventListener('click', () => earRun && earRun.cancel());
   $('earAgain').addEventListener('click', () => { earPhase('idle'); earNotice(''); earStatus('Choose the ear, then start.'); });
   $('earSave').addEventListener('click', () => {
     if (!earLast) return;

@@ -74,17 +74,18 @@ test('survives a small clock difference between speaker and microphone', () => {
 test('silence, loud noise, clipping and a moving cone ask for a retake', () => {
   const rand = rng(4);
   const silence = Float32Array.from({ length: SR * 5 }, () => 0.002 * (rand() - 0.5));
-  assert.match(Ear.analyzeEcho(silence, SR).problem, /did not hear/);
+  assert.equal(Ear.analyzeEcho(silence, SR).code, 'not-heard');
   const zeros = Ear.analyzeEcho(new Float32Array(SR * 5), SR);
-  assert.match(zeros.problem, /did not hear/);
+  assert.equal(zeros.code, 'silent');
   assert.equal(zeros.chirpsHeard, 0);
 
   assert.equal(Ear.analyzeEcho(recording({ noise: 0.15 }), SR).verdict, 'retake');
+  assert.equal(Ear.analyzeEcho(recording({ level: 0.02, noise: 0.01 }), SR).code, 'noisy');
 
-  assert.match(Ear.analyzeEcho(recording({ level: 3 }), SR).problem, /too loud/);
+  assert.equal(Ear.analyzeEcho(recording({ level: 3 }), SR).code, 'clipped');
 
   const moving = Ear.analyzeEcho(recording({ perChirp: (k) => (x) => peaking(x, 2100 + k * 230, -12, 4) }), SR);
-  assert.match(moving.problem, /cone moved/);
+  assert.equal(moving.code, 'moved');
 });
 
 test('fft round trip and dip helper', () => {
@@ -93,4 +94,24 @@ test('fft round trip and dip helper', () => {
   re.forEach((v, i) => assert.ok(Math.abs(v / 8 - i) < 1e-9));
   assert.deepEqual(Ear.deepestDip([1, 2, 3, 4, 5], [0, -1, -4, -1, 0]), { hz: 3, depthDb: 4 });
   assert.equal(Ear.deepestDip([1, 2, 3], [3, 2, 1]).depthDb, 0);
+});
+
+test('reports microphone levels, even when it asks for a retake', () => {
+  const r = Ear.analyzeEcho(recording({ level: 0.2, noise: 0.002 }), SR);
+  assert.ok(r.peakDb > -20 && r.peakDb < 0, `peak ${r.peakDb}`);
+  assert.ok(r.roomDb < -50, `room ${r.roomDb}`);
+  const silent = Ear.analyzeEcho(new Float32Array(SR * 5), SR);
+  assert.ok(silent.peakDb <= -119);
+});
+
+test('the playback sequence and its WAV file contain the chirps', () => {
+  const seq = Ear.sequence(SR, { level: 0.5 });
+  assert.equal(Ear.findChirps(seq, Ear.chirp(SR), SR).length, Ear.COUNT);
+  const buf = Ear.wav(seq, SR);
+  assert.equal(buf.byteLength, 44 + seq.length * 2);
+  assert.equal(String.fromCharCode(...new Uint8Array(buf, 0, 4)), 'RIFF');
+  const back = new Float32Array(seq.length);
+  const view = new DataView(buf);
+  for (let i = 0; i < seq.length; i++) back[i] = view.getInt16(44 + i * 2, true) / 32767;
+  assert.equal(Ear.analyzeEcho(back, SR).verdict, 'ok');
 });
