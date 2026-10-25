@@ -111,6 +111,23 @@
   .histhead button { padding: 6px 10px; font-size: 14px; }
   .confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
 
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--line); border-radius: 12px; }
+  .tabs button { border: 0; background: transparent; color: var(--muted); padding: 10px 8px; font-size: 15px; }
+  .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
+
+  .facecam { position: relative; width: min(100%, 300px); aspect-ratio: 3 / 4; margin: 0 auto; border-radius: 14px; overflow: hidden; background: #000; }
+  .facecam video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+  .facecam svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .facecam ellipse { fill: none; stroke: #fff; stroke-width: 1.2; stroke-dasharray: 3 2; }
+  .facecam.locked ellipse { stroke: #5fd18f; stroke-dasharray: none; }
+
+  .research { display: grid; gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: var(--surface); display: grid; gap: 6px; }
+  .card h3 { margin: 0; font-size: 17px; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .card p { margin: 0; font-size: 15px; }
+  .card .why { color: var(--muted); font-size: 14px; }
+  .card .chip { font-size: 11px; }
+
   video.hiddenvideo { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: 0; top: 0; }
 
   @media (max-width: 460px) {
@@ -118,6 +135,7 @@
     .bpm { border-right: 0; border-bottom: 1px solid var(--line); }
     .minor { grid-template-columns: 1fr 1fr; }
     .actions, .two { grid-template-columns: 1fr; }
+    .minor { grid-template-columns: 1fr 1fr 1fr; }
     .big { font-size: 56px; }
   }
   @media (prefers-reduced-motion: reduce) { .progress i { transition: none; } }
@@ -132,6 +150,15 @@
     <span class="chip" id="modeChip">Example reading</span>
   </header>
 
+  <div class="tabs" role="tablist" aria-label="How to measure">
+    <button type="button" role="tab" id="tabFinger" aria-selected="true">Fingertip + flash</button>
+    <button type="button" role="tab" id="tabFace" aria-selected="false">Face (no touch)</button>
+  </div>
+
+  <div class="facecam" id="facecam" hidden>
+    <svg viewBox="0 0 100 133" preserveAspectRatio="none" aria-hidden="true"><ellipse cx="50" cy="60" rx="22" ry="42.5"/></svg>
+  </div>
+
   <div class="instrument" aria-live="polite">
     <div class="strip">
       <canvas id="trace" aria-label="Pulse wave"></canvas>
@@ -145,6 +172,7 @@
       <div class="minor">
         <div><span class="label">HRV (RMSSD)</span><b id="hrv">35<span>ms</span></b></div>
         <div><span class="label">Breathing</span><b id="resp">≈14<span>/ min</span></b></div>
+        <div><span class="label">Stress</span><b id="stress">--</b></div>
       </div>
     </div>
     <div class="meta" id="meta">
@@ -159,7 +187,7 @@
     <div class="actions" id="actions">
       <button class="primary" id="liveBtn" type="button">Measure live</button>
       <label class="filebtn" id="videoBtn">Analyse a video
-        <input id="videoInput" type="file" accept="video/*" capture="environment" aria-label="Record or choose a 30-second fingertip video">
+        <input id="videoInput" type="file" accept="video/*" capture="environment" aria-label="Record or choose a 30-second video">
       </label>
     </div>
     <div class="actions" id="runActions" hidden>
@@ -171,7 +199,7 @@
     </div>
   </div>
 
-  <section class="two">
+  <section class="two" id="fingerSteps">
     <div>
       <h2>Measure live</h2>
       <ol class="steps">
@@ -190,6 +218,35 @@
     </div>
   </section>
 
+  <section class="two" id="faceSteps" hidden>
+    <div>
+      <h2>Measure live</h2>
+      <ol class="steps">
+        <li>Face a window or a lamp so your face is evenly lit.</li>
+        <li>Rest the phone on a table or hold it steady at arm's length.</li>
+        <li>Keep your face in the oval and stay still, without talking, for 30 seconds.</li>
+      </ol>
+    </div>
+    <div>
+      <h2>Or analyse a video</h2>
+      <ol class="steps">
+        <li>Record a 35-second selfie video in good light, keeping still.</li>
+        <li>Keep your face in the middle of the frame.</li>
+        <li>Tap <b>Analyse a video</b> and pick that recording.</li>
+      </ol>
+      <p class="fine">Face readings give heart rate only. Beat timing from a face is too blurry for HRV, so stress uses fingertip readings.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Stress score</h2>
+    <p class="fine" style="margin:0">
+      Worked out from heart-rate variability (HRV) in fingertip readings. HRV differs a lot between people, so the page
+      compares each reading with <b>your own usual</b> once you have saved 3 fingertip readings, ideally at the same time
+      of day while resting. Lower HRV than usual suggests more stress or tiredness; it is a wellbeing hint, not a diagnosis.
+    </p>
+  </section>
+
   <section>
     <div class="histhead">
       <h2>Your readings</h2>
@@ -201,10 +258,39 @@
       <button class="quiet" id="clearNo" type="button">Keep</button>
     </div>
     <table id="history" hidden>
-      <thead><tr><th>When</th><th>Heart rate</th><th>HRV</th><th>Quality</th></tr></thead>
+      <thead><tr><th>When</th><th>How</th><th>Heart rate</th><th>HRV</th><th>Quality</th></tr></thead>
       <tbody></tbody>
     </table>
     <p class="fine" id="noHistory">No readings yet. Saved readings stay in this browser only.</p>
+  </section>
+
+  <section class="research" aria-labelledby="researchHead">
+    <h2 id="researchHead">Research preview: not measured here</h2>
+    <p class="fine" style="margin:0">
+      Researchers have shown phones can screen for these, but each needs a model calibrated against blood tests on real
+      people. This page does not have that calibration, so it shows <b>no number</b> rather than an invented one.
+    </p>
+    <div class="card">
+      <h3>Blood oxygen (SpO₂) <span class="chip warn">Not available</span></h3>
+      <p>University of Washington researchers estimated oxygen from the fingertip camera and flash in a lab study where
+        volunteers' oxygen was lowered on purpose under medical supervision (Hoffman et al., <i>npj Digital Medicine</i>, 2022).</p>
+      <p class="why">Needs: a model trained on paired pulse-oximeter data for each phone type. An uncalibrated "98%" could
+        falsely reassure someone who is unwell. Use a pulse oximeter, and seek care if you are breathless.</p>
+    </div>
+    <div class="card">
+      <h3>Anaemia (low haemoglobin) <span class="chip warn">Not available</span></h3>
+      <p>UW's HemaApp screened haemoglobin from how flash light passes through a fingertip, without a needle
+        (Wang et al., UbiComp 2016).</p>
+      <p class="why">Needs: calibration against blood haemoglobin tests, and in the study extra light sources. A blood test
+        at a health centre is the reliable check.</p>
+    </div>
+    <div class="card">
+      <h3>Newborn jaundice <span class="chip warn">Not available</span></h3>
+      <p>UW's BiliCam photographed a baby's skin next to a printed colour card to estimate bilirubin
+        (de Greef et al., UbiComp 2014).</p>
+      <p class="why">Needs: the printed card and a model trained on newborns' blood bilirubin results. If a baby's skin or
+        eyes look yellow, especially in the first week, see a doctor or health worker the same day.</p>
+    </div>
   </section>
 
   <p class="fine">
@@ -215,6 +301,7 @@
 
 <video id="cam" class="hiddenvideo" playsinline muted></video>
 <canvas id="grab" width="64" height="48" hidden></canvas>
+<canvas id="grabFace" width="120" height="160" hidden></canvas>
 
 <script src="ppg.js"></script>
 <script>
@@ -227,9 +314,13 @@
     trace: $('trace'), bpm: $('bpm'), hrv: $('hrv'), resp: $('resp'), meta: $('meta'), chip: $('modeChip'),
     status: $('status'), notice: $('notice'), progressWrap: $('progressWrap'), progress: $('progress'),
     actions: $('actions'), runActions: $('runActions'), resultActions: $('resultActions'), scale: $('scale'),
-    cam: $('cam'), grab: $('grab'), saveBtn: $('saveBtn'),
+    cam: $('cam'), grab: $('grab'), grabFace: $('grabFace'), saveBtn: $('saveBtn'), stress: $('stress'),
+    facecam: $('facecam'), videoInput: $('videoInput'),
   };
   const grabCtx = els.grab.getContext('2d', { willReadFrequently: true });
+  const faceCtx = els.grabFace.getContext('2d', { willReadFrequently: true });
+  const FACE_MIN_SKIN = 0.35;
+  let mode = 'finger';     // 'finger' or 'face'
 
   let run = null;          // the measurement in progress
   let lastResult = null;   // the latest good result, until saved
@@ -278,10 +369,12 @@
       els.hrv.innerHTML = '--<span>ms</span>';
       els.resp.innerHTML = '--<span>/ min</span>';
       els.meta.innerHTML = '<span>No reading this time</span>';
+      els.stress.textContent = '--';
       drawTrace(wave, [], true);
       return;
     }
     els.bpm.textContent = Math.round(r.heartRate);
+    showStress(r, example);
     els.hrv.innerHTML = r.rmssdMs == null ? '--<span>ms</span>' : `${Math.round(r.rmssdMs)}<span>ms</span>`;
     els.resp.innerHTML = r.respiratoryRate == null ? '--<span>/ min</span>' : `≈${Math.round(r.respiratoryRate)}<span>/ min</span>`;
     els.meta.innerHTML = '';
@@ -294,7 +387,50 @@
     els.chip.className = example ? 'chip' : 'chip good';
   }
 
+  function showStress(r, example) {
+    if (example || r.rmssdMs == null) { els.stress.textContent = '--'; return; }
+    const earlier = loadHistory().filter((h) => h.method === 'camera-ppg-v1' && h.hrv != null).map((h) => h.hrv);
+    const s = Ppg.stressVsUsual(r.rmssdMs, earlier);
+    if (!s) {
+      els.stress.innerHTML = '';
+      const span = document.createElement('span');
+      span.textContent = `${Math.max(0, 3 - earlier.length)} more to learn your usual`;
+      span.style.marginLeft = '0';
+      els.stress.append(span);
+      return;
+    }
+    els.stress.textContent = { higher: 'Higher', usual: 'Usual', lower: 'Lower' }[s.level];
+    const span = document.createElement('span');
+    span.textContent = 'than usual';
+    if (s.level !== 'usual') els.stress.append(span);
+  }
+
   // ------------------------------------------------------------------ ui
+  function setMode(next) {
+    if (run || mode === next) return;
+    mode = next;
+    $('tabFinger').setAttribute('aria-selected', String(mode === 'finger'));
+    $('tabFace').setAttribute('aria-selected', String(mode === 'face'));
+    $('fingerSteps').hidden = mode !== 'finger';
+    $('faceSteps').hidden = mode !== 'face';
+    els.videoInput.setAttribute('capture', mode === 'face' ? 'user' : 'environment');
+    notice('');
+    setPhase('idle');
+    status(mode === 'face'
+      ? 'Measure your pulse from your face with the selfie camera in 30 seconds. No touching.'
+      : 'Measure your pulse with your phone\'s camera in 30 seconds.');
+  }
+
+  /** Blank the readout so a run never shows the previous numbers. */
+  function clearReadout() {
+    els.bpm.textContent = '--';
+    els.hrv.innerHTML = '--<span>ms</span>';
+    els.resp.innerHTML = '--<span>/ min</span>';
+    els.stress.textContent = '--';
+    els.meta.innerHTML = '<span>Measuring…</span>';
+    lastShown = null;
+  }
+
   function setPhase(phase) {
     const running = phase === 'running';
     els.actions.hidden = running || phase === 'result';
@@ -325,6 +461,27 @@
     return Ppg.averageRgba(data, w, h, 1);
   }
 
+  /** Face colour inside the oval, cropping the frame to 3:4 like the preview. */
+  function sampleFace(video) {
+    const w = els.grabFace.width, h = els.grabFace.height;
+    const vw = video.videoWidth || w, vh = video.videoHeight || h;
+    const scale = Math.min(vw / w, vh / h);
+    const sw = w * scale, sh = h * scale;
+    faceCtx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, w, h);
+    const { data } = faceCtx.getImageData(0, 0, w, h);
+    return Ppg.averageFace(data, w, h);
+  }
+
+  /** One sample for the current mode, and whether the subject is in place. */
+  function takeSample(video, t) {
+    if (mode === 'face') {
+      const f = sampleFace(video);
+      return { sample: { t, ...f }, inPlace: f.skin >= FACE_MIN_SKIN, signal: f.g };
+    }
+    const { red, green } = sampleFrame(video);
+    return { sample: { t, red, green }, inPlace: Ppg.fingerCovers(red, green), signal: red };
+  }
+
   function eachFrame(video, fn) {
     let stopped = false;
     if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
@@ -348,7 +505,9 @@
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 30 } },
+        video: mode === 'face'
+          ? { facingMode: { ideal: 'user' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } }
+          : { facingMode: { ideal: 'environment' }, width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 30 } },
       });
     } catch (e) {
       notice(e && e.name === 'NotAllowedError'
@@ -359,46 +518,60 @@
 
     const track = stream.getVideoTracks()[0];
     let torch = false;
-    try { await track.applyConstraints({ advanced: [{ torch: true }] }); torch = !!(track.getSettings && track.getSettings().torch); } catch { /* no torch */ }
+    if (mode === 'finger') {
+      try { await track.applyConstraints({ advanced: [{ torch: true }] }); torch = !!(track.getSettings && track.getSettings().torch); } catch { /* no torch */ }
+    } else {
+      els.facecam.prepend(els.cam);
+      els.cam.className = '';
+      els.facecam.hidden = false;
+    }
     els.cam.srcObject = stream;
     try { await els.cam.play(); } catch { /* muted inline video plays */ }
 
     run = { mode: 'live', stream, samples: [], live: [], filter: Ppg.liveBandpass(), base: null, phase: 'settle', start: null, restarts: 0 };
     setPhase('running');
+    clearReadout();
     keepAwake(true);
     els.chip.textContent = 'Measuring'; els.chip.className = 'chip warn';
-    if (!torch) notice('The flash did not turn on from the browser. Measure next to a bright lamp, or use "Analyse a video" with your camera app\'s flash.');
+    if (mode === 'finger' && !torch) notice('The flash did not turn on from the browser. Measure next to a bright lamp, or use "Analyse a video" with your camera app\'s flash.');
 
     run.stopFrames = eachFrame(els.cam, (_, now) => onLiveFrame(now));
   }
 
   function onLiveFrame(now) {
     if (!run || run.mode !== 'live') return;
-    const { red, green } = sampleFrame(els.cam);
-    const covered = Ppg.fingerCovers(red, green);
+    const { sample, inPlace, signal } = takeSample(els.cam, now);
+    const face = mode === 'face';
+    els.facecam.classList.toggle('locked', face && inPlace);
     if (run.start == null) run.start = now;
     const elapsed = (now - run.start) / 1000;
 
     if (run.phase === 'settle') {
-      if (!covered) { run.start = now; status('Cover the rear camera and the flash with your fingertip.'); progress(0); return; }
-      status('Finger detected. Keep still…');
+      if (!inPlace) {
+        run.start = now; progress(0);
+        status(face ? 'Fit your face inside the oval, in good light.' : 'Cover the rear camera and the flash with your fingertip.');
+        return;
+      }
+      status(face ? 'Face found. Keep still…' : 'Finger detected. Keep still…');
       if (elapsed >= SETTLE_S) Object.assign(run, { phase: 'record', start: now, samples: [], live: [], filter: Ppg.liveBandpass(), base: null });
       return;
     }
 
-    if (!covered) {
+    if (!inPlace) {
       run.restarts++;
       Object.assign(run, { phase: 'settle', start: now });
-      notice('Your finger moved off the camera, so the timer restarted. Keep it resting gently in place.');
+      notice(face
+        ? 'Your face left the oval, so the timer restarted. Keep still with your face in the oval.'
+        : 'Your finger moved off the camera, so the timer restarted. Keep it resting gently in place.');
       return;
     }
-    run.samples.push({ t: now, red, green });
-    if (run.base == null) run.base = red;
-    run.live.push(run.filter(red - run.base));
+    run.samples.push(sample);
+    if (run.base == null) run.base = signal;
+    run.live.push(run.filter(signal - run.base));
     if (run.live.length > 150) run.live.shift();
     drawTrace(run.live);
     els.scale.textContent = 'live · last 5 s';
-    status(`Measuring. ${Math.max(0, Math.ceil(RECORD_S - elapsed))} s left. Keep still and breathe normally.`);
+    status(`Measuring. ${Math.max(0, Math.ceil(RECORD_S - elapsed))} s left. Keep still${face ? ' and don\'t talk' : ' and breathe normally'}.`);
     progress(elapsed / RECORD_S);
     if (elapsed >= RECORD_S) finish();
   }
@@ -413,6 +586,7 @@
     video.muted = true;
     run = { mode: 'video', url, samples: [], live: [], filter: Ppg.liveBandpass(), base: null };
     setPhase('running');
+    clearReadout();
     keepAwake(true);
     els.chip.textContent = 'Analysing video'; els.chip.className = 'chip warn';
     status('Reading the video…');
@@ -430,10 +604,10 @@
         if (!run || run.mode !== 'video') return;
         const t = tMs / 1000;
         if (t >= from && t <= to) {
-          const { red, green } = sampleFrame(video);
-          run.samples.push({ t: tMs, red, green });
-          if (run.base == null) run.base = red;
-          run.live.push(run.filter(red - run.base));
+          const { sample, signal } = takeSample(video, tMs);
+          run.samples.push(sample);
+          if (run.base == null) run.base = signal;
+          run.live.push(run.filter(signal - run.base));
           if (run.live.length > 150) run.live.shift();
           drawTrace(run.live);
         }
@@ -462,6 +636,12 @@
     els.cam.pause();
     els.cam.removeAttribute('src');
     els.cam.srcObject = null;
+    if (!els.facecam.hidden) {
+      els.facecam.hidden = true;
+      els.facecam.classList.remove('locked');
+      els.cam.className = 'hiddenvideo';
+      document.body.append(els.cam);
+    }
     run = null;
     keepAwake(false);
     setPhase('idle');
@@ -471,10 +651,12 @@
   function finish() {
     if (!run) return;
     const samples = run.samples;
+    const method = mode === 'face' ? 'face-rppg-v1' : 'camera-ppg-v1';
     stop();
     status('Working out your pulse…');
     setTimeout(() => {
-      const r = Ppg.analyze(samples);
+      const r = method === 'face-rppg-v1' ? Ppg.analyzeFace(samples) : Ppg.analyze(samples);
+      r.method = method;
       showResult(r);
       if (r.verdict === 'good') {
         lastResult = r;
@@ -487,7 +669,9 @@
         setPhase('idle');
         els.chip.textContent = 'No reading'; els.chip.className = 'chip warn';
         status('No reading this time.');
-        notice(`${r.problem} Tips: warm your hands, rest your hand on a table, and cover both the lens and the flash.`);
+        notice(`${r.problem} ${method === 'face-rppg-v1'
+          ? 'Tips: face a window or lamp, rest the phone on something, and keep still without talking.'
+          : 'Tips: warm your hands, rest your hand on a table, and cover both the lens and the flash.'}`);
       }
     }, 30);
   }
@@ -506,7 +690,8 @@
     for (const r of list.slice(0, 20)) {
       const tr = document.createElement('tr');
       const when = new Date(r.at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
-      for (const [text, num] of [[when, false], [`${r.bpm} bpm`, true], [r.hrv == null ? '--' : `${r.hrv} ms`, true], [`${r.quality}%`, true]]) {
+      const how = r.method === 'face-rppg-v1' ? 'Face' : 'Finger';
+      for (const [text, num] of [[when, false], [how, false], [`${r.bpm} bpm`, true], [r.hrv == null ? '--' : `${r.hrv} ms`, true], [`${r.quality}%`, true]]) {
         const td = document.createElement('td'); td.textContent = text; if (num) td.className = 'num'; tr.append(td);
       }
       body.append(tr);
@@ -518,6 +703,8 @@
 
   // --------------------------------------------------------------- wiring
   $('liveBtn').addEventListener('click', startLive);
+  $('tabFinger').addEventListener('click', () => setMode('finger'));
+  $('tabFace').addEventListener('click', () => setMode('face'));
   $('videoInput').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
@@ -535,7 +722,7 @@
     list.unshift({
       at: new Date().toISOString(), bpm: Math.round(lastResult.heartRate),
       hrv: lastResult.rmssdMs == null ? null : Math.round(lastResult.rmssdMs),
-      quality: Math.round(lastResult.quality * 100), method: 'camera-ppg-v1',
+      quality: Math.round(lastResult.quality * 100), method: lastResult.method,
     });
     if (saveHistory(list.slice(0, 50))) {
       els.saveBtn.disabled = true; els.saveBtn.textContent = 'Saved';

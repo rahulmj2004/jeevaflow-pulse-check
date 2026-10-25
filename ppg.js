@@ -31,8 +31,8 @@
     return red > 80 && red < 254 && red > green * 1.8;
   }
 
-  /** samples: [{t (ms), red, green}] at any spacing -> red at 30 Hz. */
-  function resample(samples, rate = SAMPLE_RATE) {
+  /** samples: [{t (ms), red, ...}] at any spacing -> samples[key] at 30 Hz. */
+  function resample(samples, rate = SAMPLE_RATE, key = 'red') {
     if (samples.length < 2) return [];
     const start = samples[0].t, end = samples[samples.length - 1].t, step = 1000 / rate;
     const out = [];
@@ -42,7 +42,7 @@
       const a = samples[j], b = samples[j + 1];
       const span = b.t - a.t;
       const f = span <= 0 ? 0 : Math.min(1, Math.max(0, (t - a.t) / span));
-      out.push(a.red + (b.red - a.red) * f);
+      out.push(a[key] + (b[key] - a[key]) * f);
     }
     return out;
   }
@@ -145,22 +145,84 @@
     return best[1] > 3 * mean ? best[0] * 60 : null;
   }
 
-  /** Analyses a finished recording: [{t, red, green}] -> result. */
+  function retakeResult(problem, duration, extra = {}) {
+    return {
+      verdict: 'retake', problem, quality: 0, snrDb: -99, beats: 0, cleanIntervals: 0,
+      waveform: [], peakIndexes: [], durationSeconds: duration, ...extra,
+    };
+  }
+
+  /** Fingertip recording: [{t, red, green}] -> result. */
   function analyze(samples) {
     const raw = resample(samples);
     const duration = raw.length / SAMPLE_RATE;
-    const retake = (problem, extra = {}) => ({
-      verdict: 'retake', problem, quality: 0, snrDb: -99, beats: 0, cleanIntervals: 0,
-      waveform: [], peakIndexes: [], durationSeconds: duration, ...extra,
-    });
 
-    if (duration < MIN_SECONDS) return retake('The recording was too short. Keep still for the full 30 seconds.');
+    if (duration < MIN_SECONDS) return retakeResult('The recording was too short. Keep still for the full 30 seconds.', duration);
 
     const covered = samples.filter((s) => fingerCovers(s.red, s.green)).length / samples.length;
-    if (covered < 0.9) return retake('The camera was not fully covered. Rest your fingertip gently over the camera and flash.');
+    if (covered < 0.9) return retakeResult('The camera was not fully covered. Rest your fingertip gently over the camera and flash.', duration);
 
     // Blood absorbs light, so each beat is a dip in red: invert it.
-    const filtered = bandpass(raw.map((v) => -v));
+    return estimate(raw.map((v) => -v), { duration, breathingFrom: raw, hrv: true });
+  }
+
+  /**
+   * Face recording (no touch): [{t, r, g, b, skin}] where r/g/b are the
+   * mean colour of skin pixels in the face oval and skin is the share of
+   * the oval that looked like skin.
+   *
+   * Uses POS ("plane orthogonal to skin", Wang et al., IEEE TBME 2017):
+   * per 1.6 s window, normalise each channel by its mean and combine
+   * G−B and G+B−2R so that brightness changes common to all channels
+   * (lighting, small head movements) cancel and the pulse remains.
+   */
+  function analyzeFace(samples) {
+    const R = resample(samples, SAMPLE_RATE, 'r');
+    const duration = R.length / SAMPLE_RATE;
+
+    if (duration < MIN_SECONDS) return retakeResult('The recording was too short. Keep still for the full 30 seconds.', duration);
+
+    const onFace = samples.filter((s) => s.skin >= 0.35).length / samples.length;
+    if (onFace < 0.9) return retakeResult('Your face was not inside the oval for long enough. Hold the phone steady and keep your face in the oval.', duration);
+
+    const G = resample(samples, SAMPLE_RATE, 'g');
+    const B = resample(samples, SAMPLE_RATE, 'b');
+    if (G.reduce((a, b) => a + b, 0) / G.length < 40) {
+      return retakeResult('It was too dark. Face a window or a lamp so your face is evenly lit.', duration);
+    }
+
+    // More blood absorbs more light, so beats are dips in POS: invert so
+    // they are peaks, as in the fingertip path.
+    return estimate(pos(R, G, B).map((v) => -v), { duration, breathingFrom: null, hrv: false });
+  }
+
+  /** POS pulse extraction with overlap-add of 1.6 s windows. */
+  function pos(R, G, B, win = Math.round(1.6 * SAMPLE_RATE)) {
+    const n = R.length, H = new Array(n).fill(0);
+    for (let t = 0; t + win <= n; t++) {
+      let mr = 0, mg = 0, mb = 0;
+      for (let i = t; i < t + win; i++) { mr += R[i]; mg += G[i]; mb += B[i]; }
+      mr /= win; mg /= win; mb /= win;
+      if (!mr || !mg || !mb) continue;
+      const s1 = [], s2 = [];
+      for (let i = t; i < t + win; i++) {
+        const r = R[i] / mr, g = G[i] / mg, b = B[i] / mb;
+        s1.push(g - b);
+        s2.push(g + b - 2 * r);
+      }
+      const sd2 = std(s2);
+      const alpha = sd2 > 0 ? std(s1) / sd2 : 0;
+      const h = s1.map((v, k) => v + alpha * s2[k]);
+      const mh = h.reduce((a, b) => a + b, 0) / win;
+      for (let k = 0; k < win; k++) H[t + k] += h[k] - mh;
+    }
+    return H;
+  }
+
+  /** Heart rate, HRV and quality from a pulse series (beats are peaks). */
+  function estimate(pulse, { duration, breathingFrom, hrv }) {
+    const retake = (problem, extra) => retakeResult(problem, duration, extra);
+    const filtered = bandpass(pulse);
     const wave = filtered.slice(SAMPLE_RATE, filtered.length - SAMPLE_RATE);
 
     // Harmonic summation: a pulse wave has strong overtones, so score
@@ -201,8 +263,8 @@
 
     const diffs = [];
     for (let i = 1; i < clean.length; i++) if (clean[i].ok && clean[i - 1].ok) diffs.push(clean[i].ms - clean[i - 1].ms);
-    const rmssd = diffs.length >= 10 ? Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length) : null;
-    const sdnn = good.length >= 10 ? std(good) : null;
+    const rmssd = hrv && diffs.length >= 10 ? Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length) : null;
+    const sdnn = hrv && good.length >= 10 ? std(good) : null;
 
     const agree = Math.abs(peakBpm - spectralBpm) <= MAX_DISAGREEMENT_BPM;
     const snrScore = Math.min(1, Math.max(0, (snrDb + 3) / 9));
@@ -216,7 +278,7 @@
       return { verdict: 'retake', problem: 'The pulse signal was too noisy to trust. Keep still, press lightly, and try again.', ...base };
     }
 
-    return { verdict: 'good', heartRate: peakBpm, rmssdMs: rmssd, sdnnMs: sdnn, respiratoryRate: breathing(raw), ...base };
+    return { verdict: 'good', heartRate: peakBpm, rmssdMs: rmssd, sdnnMs: sdnn, respiratoryRate: breathingFrom ? breathing(breathingFrom) : null, ...base };
   }
 
   /** A causal band-pass for the live waveform while recording. */
@@ -243,7 +305,56 @@
     return count ? { red: red / count, green: green / count } : { red: 0, green: 0 };
   }
 
-  const api = { SAMPLE_RATE, fingerCovers, resample, bandpass, findPeaks, spectrum, analyze, liveBandpass, averageRgba };
+  /** Skin test in YCbCr (Chai & Ngan ranges), for 0–255 RGB. */
+  function isSkin(r, g, b) {
+    const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+    const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+    return cr >= 133 && cr <= 173 && cb >= 77 && cb <= 127;
+  }
+
+  /**
+   * Mean colour of skin pixels inside the face oval of RGBA pixel data
+   * (oval centred at 50% x, 45% y; 22% wide and 32% tall radii).
+   */
+  function averageFace(data, width, height) {
+    const cx = width * 0.5, cy = height * 0.45, rx = width * 0.22, ry = height * 0.32;
+    let r = 0, g = 0, b = 0, skin = 0, inside = 0;
+    for (let y = Math.floor(cy - ry); y <= cy + ry; y++) {
+      for (let x = Math.floor(cx - rx); x <= cx + rx; x++) {
+        if (x < 0 || y < 0 || x >= width || y >= height) continue;
+        if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 > 1) continue;
+        inside++;
+        const i = (y * width + x) * 4;
+        if (!isSkin(data[i], data[i + 1], data[i + 2])) continue;
+        r += data[i]; g += data[i + 1]; b += data[i + 2]; skin++;
+      }
+    }
+    return skin ? { r: r / skin, g: g / skin, b: b / skin, skin: skin / inside } : { r: 0, g: 0, b: 0, skin: 0 };
+  }
+
+  /**
+   * Stress compared with the person's own usual, from fingertip RMSSD.
+   * HRV varies too much between people (age, fitness) for a fixed
+   * threshold, so this needs at least 3 earlier readings and compares
+   * ln(RMSSD) with their mean: lower HRV than usual suggests more stress.
+   * Returns null without enough history.
+   */
+  function stressVsUsual(rmssd, earlier) {
+    const past = earlier.filter((v) => v > 0).map(Math.log);
+    if (!(rmssd > 0) || past.length < 3) return null;
+    const mean = past.reduce((a, b) => a + b, 0) / past.length;
+    // Floor the spread at 0.15 (about ±15%) so a few similar readings
+    // do not make ordinary day-to-day wobble look significant.
+    const spread = Math.max(std(past), 0.15);
+    const z = (Math.log(rmssd) - mean) / spread;
+    const level = z < -1 ? 'higher' : z > 1 ? 'lower' : 'usual';
+    return { level, z, baselineMs: Math.exp(mean), readings: past.length };
+  }
+
+  const api = {
+    stressVsUsual, SAMPLE_RATE, fingerCovers, resample, bandpass, findPeaks, spectrum, analyze, analyzeFace, pos,
+    liveBandpass, averageRgba, averageFace, isSkin,
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Ppg = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

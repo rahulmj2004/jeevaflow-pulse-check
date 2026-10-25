@@ -85,3 +85,78 @@ test('averages the centre of RGBA pixels', () => {
   assert.equal(green, 60);
   assert.ok(Ppg.fingerCovers(red, green));
 });
+
+/**
+ * A synthetic face recording: blood absorbs mostly green, so each beat
+ * dims the channels by relative strengths 0.33 / 0.77 / 0.53 (de Haan &
+ * Jeanne 2013), on top of lighting changes common to all channels that
+ * are 10× stronger than the pulse, plus camera noise. Averaging a few
+ * thousand skin pixels leaves roughly ±0.05 of noise per frame; the
+ * default here is twice that.
+ */
+function syntheticFace({ bpm, seconds = 30, lighting = 0.03, noise = 0.1, skin = 0.8, seed = 2, base = [190, 130, 110] }) {
+  const rand = rng(seed);
+  const gauss = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+  const strength = [0.33, 0.77, 0.53].map((k) => k * 0.004);
+  const out = [];
+  let walk = 0;
+  for (let t = 0; t <= seconds * 1000; t += 1000 / 30 + (rand() - 0.5) * 8) {
+    const phase = (t / 1000) * (bpm / 60);
+    const pulse = Math.pow(Math.max(0, Math.sin(2 * Math.PI * phase)), 3);
+    walk += (rand() - 0.5) * 0.002;
+    const light = 1 + lighting * Math.sin(2 * Math.PI * t / 3300) + walk;
+    const [r, g, b] = base.map((c, i) => c * light * (1 - strength[i] * pulse) + noise * gauss());
+    out.push({ t, r, g, b, skin });
+  }
+  return out;
+}
+
+for (const bpm of [58, 76, 104]) {
+  test(`face: ${bpm} bpm through lighting changes 10× the pulse`, () => {
+    const r = Ppg.analyzeFace(syntheticFace({ bpm }));
+    assert.equal(r.verdict, 'good', r.problem);
+    assert.ok(Math.abs(r.heartRate - bpm) <= 3, `face hr ${r.heartRate}`);
+    assert.equal(r.rmssdMs, null, 'no HRV claimed from face video');
+  });
+}
+
+test('face: heavy noise never produces a wrong number', () => {
+  for (const noise of [0.2, 0.3, 0.5]) {
+    for (let bpm = 50; bpm <= 150; bpm += 10) {
+      const r = Ppg.analyzeFace(syntheticFace({ bpm, noise, seed: bpm }));
+      if (r.verdict === 'good') assert.ok(Math.abs(r.heartRate - bpm) <= 3, `${bpm} read as ${r.heartRate}`);
+    }
+  }
+});
+
+test('face: no face in the oval, darkness, or a short clip ask for a retake', () => {
+  assert.match(Ppg.analyzeFace(syntheticFace({ bpm: 70, skin: 0.1 })).problem, /oval/);
+  assert.match(Ppg.analyzeFace(syntheticFace({ bpm: 70, base: [30, 20, 18] })).problem, /too dark/);
+  assert.match(Ppg.analyzeFace(syntheticFace({ bpm: 70, seconds: 9 })).problem, /too short/);
+});
+
+test('face: pure noise gives no number', () => {
+  const rand = rng(11);
+  const samples = Array.from({ length: 900 }, (_, i) => ({
+    t: i * 33.3, r: 190 + 2 * (rand() - 0.5), g: 130 + 2 * (rand() - 0.5), b: 110 + 2 * (rand() - 0.5), skin: 0.8,
+  }));
+  assert.equal(Ppg.analyzeFace(samples).verdict, 'retake');
+});
+
+test('skin test and face oval averaging', () => {
+  assert.ok(Ppg.isSkin(190, 130, 110));
+  assert.ok(!Ppg.isSkin(60, 120, 200));
+  const w = 60, h = 40, data = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < data.length; i += 4) data.set([190, 130, 110, 255], i);
+  const f = Ppg.averageFace(data, w, h);
+  assert.equal(f.r, 190);
+  assert.equal(f.skin, 1);
+});
+
+test('stress is only shown against the person\'s own usual HRV', () => {
+  assert.equal(Ppg.stressVsUsual(40, [42, 38]), null, 'needs 3 earlier readings');
+  assert.equal(Ppg.stressVsUsual(null, [40, 42, 38]), null);
+  assert.equal(Ppg.stressVsUsual(40, [42, 38, 41, 39]).level, 'usual');
+  assert.equal(Ppg.stressVsUsual(22, [42, 38, 41, 39]).level, 'higher');
+  assert.equal(Ppg.stressVsUsual(65, [42, 38, 41, 39]).level, 'lower');
+});
