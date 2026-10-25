@@ -1,0 +1,588 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<title>JeevaFlow Pulse Check</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+  /* Layout: one narrow instrument column. The trace sits on ECG grid
+     paper; readings use a monospaced readout face. */
+  :root {
+    --paper: #fbfaf8;
+    --surface: #ffffff;
+    --ink: #172426;
+    --muted: #55666a;
+    --line: #dfe5e4;
+    --grid-minor: #f6dcd6;
+    --grid-major: #ebb8ad;
+    --trace: #c2263b;
+    --accent: #0d5c63;
+    --accent-ink: #ffffff;
+    --accent-soft: #e2f0ef;
+    --good: #1d7a46;
+    --warn: #a35b00;
+    --warn-soft: #fbf0e0;
+    --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+    --font-read: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0f1719; --surface: #152125; --ink: #e7eeed; --muted: #9db0b2; --line: #26363a;
+      --grid-minor: #1d2a2d; --grid-major: #2f4246; --trace: #ff6b7d; --accent: #5cc3c9; --accent-ink: #0c1f22;
+      --accent-soft: #173438; --good: #5fd18f; --warn: #f2b45a; --warn-soft: #2e2617; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0f1719; --surface: #152125; --ink: #e7eeed; --muted: #9db0b2; --line: #26363a;
+    --grid-minor: #1d2a2d; --grid-major: #2f4246; --trace: #ff6b7d; --accent: #5cc3c9; --accent-ink: #0c1f22;
+    --accent-soft: #173438; --good: #5fd18f; --warn: #f2b45a; --warn-soft: #2e2617; color-scheme: dark;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.5 var(--font-body);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 20px 40px;
+  }
+  .wrap { max-width: 560px; margin: 0 auto; display: grid; gap: 18px; }
+
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .brand { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1 { margin: 2px 0 0; font-size: 28px; line-height: 1.15; text-wrap: balance; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+    font-size: 12px; letter-spacing: .04em; text-transform: uppercase; font-weight: 700;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); }
+  .chip.good { background: var(--accent-soft); color: var(--good); }
+
+  .instrument { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .strip { position: relative; height: 150px; }
+  .strip canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .strip .scale {
+    position: absolute; right: 10px; bottom: 6px; font: 500 11px var(--font-read); color: var(--muted);
+    background: var(--surface); padding: 0 4px; border-radius: 4px;
+  }
+  .readout { display: grid; grid-template-columns: 1.3fr 1fr; gap: 0; border-top: 1px solid var(--line); }
+  .bpm { padding: 14px 16px; border-right: 1px solid var(--line); min-width: 0; }
+  .label { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .big { font: 600 64px/1 var(--font-read); color: var(--trace); font-variant-numeric: tabular-nums; }
+  .big small { font: 500 16px var(--font-body); color: var(--muted); margin-left: 4px; }
+  .minor { display: grid; align-content: center; gap: 10px; padding: 14px 16px; min-width: 0; }
+  .minor div { display: grid; }
+  .minor b { font: 600 20px var(--font-read); font-variant-numeric: tabular-nums; }
+  .minor b span { font: 400 13px var(--font-body); color: var(--muted); margin-left: 3px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 10px 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+
+  .panel { display: grid; gap: 12px; }
+  .status { font-size: 18px; font-weight: 700; text-wrap: balance; min-height: 1.5em; }
+  .progress { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+  .progress i { display: block; height: 100%; width: 0%; background: var(--trace); transition: width .3s linear; }
+
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button, .filebtn {
+    font: 700 16px var(--font-body); border-radius: 10px; padding: 13px 14px; cursor: pointer;
+    border: 1.5px solid var(--accent); background: var(--surface); color: var(--accent); text-align: center;
+  }
+  button.primary { background: var(--accent); color: var(--accent-ink); }
+  button:disabled { opacity: .5; cursor: default; }
+  button:focus-visible, .filebtn:focus-within { outline: 3px solid var(--trace); outline-offset: 2px; }
+  .filebtn { position: relative; display: block; }
+  .filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+  button.quiet { border-color: var(--line); color: var(--ink); }
+
+  .notice { border-radius: 10px; padding: 12px 14px; background: var(--warn-soft); color: var(--ink); font-size: 15px; }
+  .notice b { color: var(--warn); }
+
+  section h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 8px; }
+  ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .two > div { min-width: 0; }
+  .fine { font-size: 14px; color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  td, th { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+  td.num { font-family: var(--font-read); font-variant-numeric: tabular-nums; }
+  .histhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .histhead button { padding: 6px 10px; font-size: 14px; }
+  .confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+
+  video.hiddenvideo { position: fixed; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: 0; top: 0; }
+
+  @media (max-width: 460px) {
+    .readout { grid-template-columns: 1fr; }
+    .bpm { border-right: 0; border-bottom: 1px solid var(--line); }
+    .minor { grid-template-columns: 1fr 1fr; }
+    .actions, .two { grid-template-columns: 1fr; }
+    .big { font-size: 56px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .progress i { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <div class="brand">JeevaFlow Sentinel</div>
+      <h1>Pulse Check</h1>
+    </div>
+    <span class="chip" id="modeChip">Example reading</span>
+  </header>
+
+  <div class="instrument" aria-live="polite">
+    <div class="strip">
+      <canvas id="trace" aria-label="Pulse wave"></canvas>
+      <span class="scale" id="scale">25 mm/s · last 10 s</span>
+    </div>
+    <div class="readout">
+      <div class="bpm">
+        <div class="label">Heart rate</div>
+        <div class="big"><span id="bpm">72</span><small>bpm</small></div>
+      </div>
+      <div class="minor">
+        <div><span class="label">HRV (RMSSD)</span><b id="hrv">35<span>ms</span></b></div>
+        <div><span class="label">Breathing</span><b id="resp">≈14<span>/ min</span></b></div>
+      </div>
+    </div>
+    <div class="meta" id="meta">
+      <span>Quality 100%</span><span>72 bpm from 34 beats · 72 bpm from the spectrum</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="status" id="status">Measure your pulse with your phone's camera in 30 seconds.</div>
+    <div class="progress" id="progressWrap" hidden><i id="progress"></i></div>
+    <div class="notice" id="notice" hidden></div>
+    <div class="actions" id="actions">
+      <button class="primary" id="liveBtn" type="button">Measure live</button>
+      <label class="filebtn" id="videoBtn">Analyse a video
+        <input id="videoInput" type="file" accept="video/*" capture="environment" aria-label="Record or choose a 30-second fingertip video">
+      </label>
+    </div>
+    <div class="actions" id="runActions" hidden>
+      <button class="quiet" id="cancelBtn" type="button">Cancel</button>
+    </div>
+    <div class="actions" id="resultActions" hidden>
+      <button class="primary" id="saveBtn" type="button">Save reading</button>
+      <button id="againBtn" type="button">Measure again</button>
+    </div>
+  </div>
+
+  <section class="two">
+    <div>
+      <h2>Measure live</h2>
+      <ol class="steps">
+        <li>Sit down and rest for a minute.</li>
+        <li>Cover the rear camera and the flash with your index fingertip. Press lightly.</li>
+        <li>Keep still for 30 seconds.</li>
+      </ol>
+    </div>
+    <div>
+      <h2>Or analyse a video</h2>
+      <ol class="steps">
+        <li>In your camera app, switch the flash to <b>on</b> in video mode.</li>
+        <li>Cover the lens and flash with your fingertip and record 35 seconds.</li>
+        <li>Tap <b>Analyse a video</b> and pick that recording.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <div class="histhead">
+      <h2>Your readings</h2>
+      <button class="quiet" id="clearBtn" type="button" hidden>Delete all</button>
+    </div>
+    <div class="confirm" id="clearConfirm" hidden>
+      Delete every reading saved in this browser?
+      <button class="primary" id="clearYes" type="button">Delete</button>
+      <button class="quiet" id="clearNo" type="button">Keep</button>
+    </div>
+    <table id="history" hidden>
+      <thead><tr><th>When</th><th>Heart rate</th><th>HRV</th><th>Quality</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="fine" id="noHistory">No readings yet. Saved readings stay in this browser only.</p>
+  </section>
+
+  <p class="fine">
+    Video is processed on this device and is never uploaded or saved. This is a screening estimate, not a medical
+    device or a diagnosis. If you feel unwell, contact your doctor or emergency services.
+  </p>
+</div>
+
+<video id="cam" class="hiddenvideo" playsinline muted></video>
+<canvas id="grab" width="64" height="48" hidden></canvas>
+
+<script src="ppg.js"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const SETTLE_S = 3, RECORD_S = 30, STORE_KEY = 'jf.pulse.readings';
+
+  const els = {
+    trace: $('trace'), bpm: $('bpm'), hrv: $('hrv'), resp: $('resp'), meta: $('meta'), chip: $('modeChip'),
+    status: $('status'), notice: $('notice'), progressWrap: $('progressWrap'), progress: $('progress'),
+    actions: $('actions'), runActions: $('runActions'), resultActions: $('resultActions'), scale: $('scale'),
+    cam: $('cam'), grab: $('grab'), saveBtn: $('saveBtn'),
+  };
+  const grabCtx = els.grab.getContext('2d', { willReadFrequently: true });
+
+  let run = null;          // the measurement in progress
+  let lastResult = null;   // the latest good result, until saved
+  let wakeLock = null;
+
+  // ---------------------------------------------------------------- drawing
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function drawTrace(values, peaks = [], dim = false) {
+    const c = els.trace, dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = css('--surface'); g.fillRect(0, 0, w, h);
+
+    // ECG paper: 1 mm minor squares, 5 mm major (8 px per mm here).
+    for (const [step, color] of [[8, css('--grid-minor')], [40, css('--grid-major')]]) {
+      g.strokeStyle = color; g.lineWidth = 1; g.beginPath();
+      for (let x = 0.5; x < w; x += step) { g.moveTo(x, 0); g.lineTo(x, h); }
+      for (let y = 0.5; y < h; y += step) { g.moveTo(0, y); g.lineTo(w, y); }
+      g.stroke();
+    }
+    if (!values || values.length < 2) return;
+
+    let lo = Infinity, hi = -Infinity;
+    for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (hi - lo < 1e-9) hi = lo + 1;
+    const dx = w / (values.length - 1);
+    const y = (v) => h - 14 - ((v - lo) / (hi - lo)) * (h - 28);
+    g.strokeStyle = dim ? css('--muted') : css('--trace');
+    g.lineWidth = 2; g.lineJoin = 'round'; g.beginPath();
+    values.forEach((v, i) => (i ? g.lineTo(i * dx, y(v)) : g.moveTo(0, y(v))));
+    g.stroke();
+    g.fillStyle = css('--trace');
+    for (const p of peaks) if (p >= 0 && p < values.length) { g.beginPath(); g.arc(p * dx, y(values[p]), 3.5, 0, 7); g.fill(); }
+  }
+
+  function showResult(r, { example = false } = {}) {
+    const start = Math.max(0, r.waveform.length - 300);
+    const wave = r.waveform.slice(start);
+    if (r.verdict !== 'good') {
+      els.bpm.textContent = '--';
+      els.hrv.innerHTML = '--<span>ms</span>';
+      els.resp.innerHTML = '--<span>/ min</span>';
+      els.meta.innerHTML = '<span>No reading this time</span>';
+      drawTrace(wave, [], true);
+      return;
+    }
+    els.bpm.textContent = Math.round(r.heartRate);
+    els.hrv.innerHTML = r.rmssdMs == null ? '--<span>ms</span>' : `${Math.round(r.rmssdMs)}<span>ms</span>`;
+    els.resp.innerHTML = r.respiratoryRate == null ? '--<span>/ min</span>' : `≈${Math.round(r.respiratoryRate)}<span>/ min</span>`;
+    els.meta.innerHTML = '';
+    for (const text of [
+      `Quality ${Math.round(r.quality * 100)}%`,
+      `${Math.round(r.heartRate)} bpm from ${r.beats} beats · ${Math.round(r.spectralHeartRate)} bpm from the spectrum`,
+    ]) { const s = document.createElement('span'); s.textContent = text; els.meta.append(s); }
+    drawTrace(wave, r.peakIndexes.filter((p) => p >= start).map((p) => p - start));
+    els.chip.textContent = example ? 'Example reading' : 'Your reading';
+    els.chip.className = example ? 'chip' : 'chip good';
+  }
+
+  // ------------------------------------------------------------------ ui
+  function setPhase(phase) {
+    const running = phase === 'running';
+    els.actions.hidden = running || phase === 'result';
+    els.runActions.hidden = !running;
+    els.resultActions.hidden = phase !== 'result';
+    els.progressWrap.hidden = !running;
+  }
+  function status(text) { els.status.textContent = text; }
+  function notice(text) {
+    els.notice.hidden = !text;
+    els.notice.innerHTML = '';
+    if (text) { const b = document.createElement('b'); b.textContent = 'Note: '; els.notice.append(b, text); }
+  }
+  function progress(fraction) { els.progress.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`; }
+
+  async function keepAwake(on) {
+    try {
+      if (on && 'wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+      else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+    } catch { /* optional */ }
+  }
+
+  // -------------------------------------------------------------- sampling
+  function sampleFrame(video) {
+    const w = els.grab.width, h = els.grab.height;
+    grabCtx.drawImage(video, 0, 0, w, h);
+    const { data } = grabCtx.getImageData(0, 0, w, h);
+    return Ppg.averageRgba(data, w, h, 1);
+  }
+
+  function eachFrame(video, fn) {
+    let stopped = false;
+    if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+      const tick = (now, meta) => { if (stopped) return; fn(meta.mediaTime * 1000, now); video.requestVideoFrameCallback(tick); };
+      video.requestVideoFrameCallback(tick);
+    } else {
+      const tick = (now) => { if (stopped) return; fn(video.currentTime * 1000, now); requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }
+    return () => { stopped = true; };
+  }
+
+  // ------------------------------------------------------------ live mode
+  async function startLive() {
+    notice('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      notice('This page cannot open the camera here. Use "Analyse a video" instead, or open the page in Chrome or Safari over https.');
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 30 } },
+      });
+    } catch (e) {
+      notice(e && e.name === 'NotAllowedError'
+        ? 'Camera access was refused. Allow the camera for this page in your browser settings, or use "Analyse a video".'
+        : 'The camera could not be opened here. Use "Analyse a video" instead.');
+      return;
+    }
+
+    const track = stream.getVideoTracks()[0];
+    let torch = false;
+    try { await track.applyConstraints({ advanced: [{ torch: true }] }); torch = !!(track.getSettings && track.getSettings().torch); } catch { /* no torch */ }
+    els.cam.srcObject = stream;
+    try { await els.cam.play(); } catch { /* muted inline video plays */ }
+
+    run = { mode: 'live', stream, samples: [], live: [], filter: Ppg.liveBandpass(), base: null, phase: 'settle', start: null, restarts: 0 };
+    setPhase('running');
+    keepAwake(true);
+    els.chip.textContent = 'Measuring'; els.chip.className = 'chip warn';
+    if (!torch) notice('The flash did not turn on from the browser. Measure next to a bright lamp, or use "Analyse a video" with your camera app\'s flash.');
+
+    run.stopFrames = eachFrame(els.cam, (_, now) => onLiveFrame(now));
+  }
+
+  function onLiveFrame(now) {
+    if (!run || run.mode !== 'live') return;
+    const { red, green } = sampleFrame(els.cam);
+    const covered = Ppg.fingerCovers(red, green);
+    if (run.start == null) run.start = now;
+    const elapsed = (now - run.start) / 1000;
+
+    if (run.phase === 'settle') {
+      if (!covered) { run.start = now; status('Cover the rear camera and the flash with your fingertip.'); progress(0); return; }
+      status('Finger detected. Keep still…');
+      if (elapsed >= SETTLE_S) Object.assign(run, { phase: 'record', start: now, samples: [], live: [], filter: Ppg.liveBandpass(), base: null });
+      return;
+    }
+
+    if (!covered) {
+      run.restarts++;
+      Object.assign(run, { phase: 'settle', start: now });
+      notice('Your finger moved off the camera, so the timer restarted. Keep it resting gently in place.');
+      return;
+    }
+    run.samples.push({ t: now, red, green });
+    if (run.base == null) run.base = red;
+    run.live.push(run.filter(red - run.base));
+    if (run.live.length > 150) run.live.shift();
+    drawTrace(run.live);
+    els.scale.textContent = 'live · last 5 s';
+    status(`Measuring. ${Math.max(0, Math.ceil(RECORD_S - elapsed))} s left. Keep still and breathe normally.`);
+    progress(elapsed / RECORD_S);
+    if (elapsed >= RECORD_S) finish();
+  }
+
+  // ----------------------------------------------------------- video mode
+  function analyseVideo(file) {
+    notice('');
+    const url = URL.createObjectURL(file);
+    const video = els.cam;
+    video.srcObject = null;
+    video.src = url;
+    video.muted = true;
+    run = { mode: 'video', url, samples: [], live: [], filter: Ppg.liveBandpass(), base: null };
+    setPhase('running');
+    keepAwake(true);
+    els.chip.textContent = 'Analysing video'; els.chip.className = 'chip warn';
+    status('Reading the video…');
+
+    video.onloadedmetadata = async () => {
+      const usable = video.duration - 3;
+      if (!isFinite(video.duration) || usable < 17) {
+        stop();
+        notice('The video is too short. Record at least 20 seconds, ideally 35.');
+        status('Measure your pulse with your phone\'s camera in 30 seconds.');
+        return;
+      }
+      const from = 2, to = Math.min(video.duration - 1, from + 32);
+      run.stopFrames = eachFrame(video, (tMs) => {
+        if (!run || run.mode !== 'video') return;
+        const t = tMs / 1000;
+        if (t >= from && t <= to) {
+          const { red, green } = sampleFrame(video);
+          run.samples.push({ t: tMs, red, green });
+          if (run.base == null) run.base = red;
+          run.live.push(run.filter(red - run.base));
+          if (run.live.length > 150) run.live.shift();
+          drawTrace(run.live);
+        }
+        progress((t - from) / (to - from));
+        status(`Analysing the video… ${Math.round(Math.max(0, Math.min(1, (t - from) / (to - from))) * 100)}%`);
+        if (t >= to) { video.pause(); finish(); }
+      });
+      video.onended = () => run && run.mode === 'video' && finish();
+      try {
+        video.currentTime = 0;
+        await video.play();
+      } catch {
+        stop();
+        notice('This browser could not play the video. Try recording again, or use "Measure live".');
+      }
+    };
+    video.onerror = () => { stop(); notice('This video format could not be read. Record a new video with your camera app and try again.'); };
+  }
+
+  // ------------------------------------------------------------- finishing
+  function stop() {
+    if (!run) return;
+    if (run.stopFrames) run.stopFrames();
+    if (run.stream) run.stream.getTracks().forEach((t) => t.stop());
+    if (run.url) URL.revokeObjectURL(run.url);
+    els.cam.pause();
+    els.cam.removeAttribute('src');
+    els.cam.srcObject = null;
+    run = null;
+    keepAwake(false);
+    setPhase('idle');
+    els.scale.textContent = '25 mm/s · last 10 s';
+  }
+
+  function finish() {
+    if (!run) return;
+    const samples = run.samples;
+    stop();
+    status('Working out your pulse…');
+    setTimeout(() => {
+      const r = Ppg.analyze(samples);
+      showResult(r);
+      if (r.verdict === 'good') {
+        lastResult = r;
+        setPhase('result');
+        els.saveBtn.disabled = false;
+        els.saveBtn.textContent = 'Save reading';
+        status(`Your heart rate is about ${Math.round(r.heartRate)} beats per minute.`);
+      } else {
+        lastResult = null;
+        setPhase('idle');
+        els.chip.textContent = 'No reading'; els.chip.className = 'chip warn';
+        status('No reading this time.');
+        notice(`${r.problem} Tips: warm your hands, rest your hand on a table, and cover both the lens and the flash.`);
+      }
+    }, 30);
+  }
+
+  // --------------------------------------------------------------- history
+  function loadHistory() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); } catch { return []; }
+  }
+  function saveHistory(list) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); return true; } catch { return false; }
+  }
+  function renderHistory() {
+    const list = loadHistory();
+    const table = $('history'), body = table.querySelector('tbody');
+    body.innerHTML = '';
+    for (const r of list.slice(0, 20)) {
+      const tr = document.createElement('tr');
+      const when = new Date(r.at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+      for (const [text, num] of [[when, false], [`${r.bpm} bpm`, true], [r.hrv == null ? '--' : `${r.hrv} ms`, true], [`${r.quality}%`, true]]) {
+        const td = document.createElement('td'); td.textContent = text; if (num) td.className = 'num'; tr.append(td);
+      }
+      body.append(tr);
+    }
+    table.hidden = !list.length;
+    $('noHistory').hidden = !!list.length;
+    $('clearBtn').hidden = !list.length;
+  }
+
+  // --------------------------------------------------------------- wiring
+  $('liveBtn').addEventListener('click', startLive);
+  $('videoInput').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (file) analyseVideo(file);
+  });
+  $('cancelBtn').addEventListener('click', () => {
+    stop();
+    status('Stopped. Start again when you are ready.');
+    els.chip.textContent = 'Stopped'; els.chip.className = 'chip';
+  });
+  $('againBtn').addEventListener('click', () => { setPhase('idle'); notice(''); status('Choose how to measure.'); });
+  els.saveBtn.addEventListener('click', () => {
+    if (!lastResult) return;
+    const list = loadHistory();
+    list.unshift({
+      at: new Date().toISOString(), bpm: Math.round(lastResult.heartRate),
+      hrv: lastResult.rmssdMs == null ? null : Math.round(lastResult.rmssdMs),
+      quality: Math.round(lastResult.quality * 100), method: 'camera-ppg-v1',
+    });
+    if (saveHistory(list.slice(0, 50))) {
+      els.saveBtn.disabled = true; els.saveBtn.textContent = 'Saved';
+      lastResult = null;
+      renderHistory();
+    } else {
+      notice('This browser is not keeping data for this page (for example, a private window), so the reading was not saved.');
+    }
+  });
+  $('clearBtn').addEventListener('click', () => { $('clearConfirm').hidden = false; });
+  $('clearNo').addEventListener('click', () => { $('clearConfirm').hidden = true; });
+  $('clearYes').addEventListener('click', () => {
+    try { localStorage.removeItem(STORE_KEY); } catch { /* nothing stored */ }
+    $('clearConfirm').hidden = true;
+    renderHistory();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && run && run.mode === 'live') {
+      stop();
+      notice('The check stopped because the page was hidden. Start again when ready.');
+    }
+  });
+  window.addEventListener('resize', () => lastShown && showResult(lastShown.r, lastShown.o));
+
+  // Opening state: an example reading from a synthetic 72 bpm pulse,
+  // marked "Example reading" until the viewer measures their own.
+  function exampleSamples() {
+    let seed = 5;
+    const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const out = [];
+    for (let t = 0; t <= 30000; t += 33.3) {
+      let pulse = 0;
+      for (let b = 300, k = 0; b < 32000; b += 833 + 30 * Math.sin(k++ * 1.9)) {
+        const d = t - b;
+        if (d > -400 && d < 900) pulse += Math.exp(-((d / 70) ** 2)) + 0.35 * Math.exp(-(((d - 330) / 90) ** 2));
+      }
+      out.push({ t, red: 200 - 1.2 * pulse + 0.4 * Math.sin(t / 650) + 0.1 * (rand() - 0.5), green: 40 });
+    }
+    return out;
+  }
+  let lastShown = null;
+  const origShow = showResult;
+  showResult = (r, o) => { lastShown = { r, o }; origShow(r, o); };
+  showResult(Ppg.analyze(exampleSamples()), { example: true });
+  renderHistory();
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => lastShown && origShow(lastShown.r, lastShown.o));
+})();
+</script>
+
+</body></html>
