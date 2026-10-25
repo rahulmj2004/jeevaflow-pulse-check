@@ -111,7 +111,13 @@
   .histhead button { padding: 6px 10px; font-size: 14px; }
   .confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
 
-  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--line); border-radius: 12px; }
+  [hidden] { display: none !important; }
+  .stack { display: grid; gap: 18px; }
+  .strip.tall { height: 220px; }
+  .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .sides button[aria-checked="true"] { background: var(--accent); color: var(--accent-ink); }
+  a.filebtn { text-decoration: none; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; padding: 4px; background: var(--line); border-radius: 12px; }
   .tabs button { border: 0; background: transparent; color: var(--muted); padding: 10px 8px; font-size: 15px; }
   .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
 
@@ -151,10 +157,12 @@
   </header>
 
   <div class="tabs" role="tablist" aria-label="How to measure">
-    <button type="button" role="tab" id="tabFinger" aria-selected="true">Fingertip + flash</button>
-    <button type="button" role="tab" id="tabFace" aria-selected="false">Face (no touch)</button>
+    <button type="button" role="tab" id="tabFinger" aria-selected="true">Fingertip</button>
+    <button type="button" role="tab" id="tabFace" aria-selected="false">Face</button>
+    <button type="button" role="tab" id="tabEar" aria-selected="false">Ear echo</button>
   </div>
 
+  <div class="stack" id="pulseUi">
   <div class="facecam" id="facecam" hidden>
     <svg viewBox="0 0 100 133" preserveAspectRatio="none" aria-hidden="true"><ellipse cx="50" cy="60" rx="22" ry="42.5"/></svg>
   </div>
@@ -264,6 +272,100 @@
     <p class="fine" id="noHistory">No readings yet. Saved readings stay in this browser only.</p>
   </section>
 
+  </div>
+
+  <div class="stack" id="earUi" hidden>
+    <div class="instrument" aria-live="polite">
+      <div class="strip tall"><canvas id="echo" aria-label="Echo curve: loudness of the echo across frequencies"></canvas></div>
+      <div class="readout">
+        <div class="bpm">
+          <div class="label">Deepest dip</div>
+          <div class="big"><span id="dipDb">--</span><small>dB</small></div>
+          <div class="fine" id="dipHz">at -- kHz</div>
+        </div>
+        <div class="minor">
+          <div><span class="label">Chirps heard</span><b id="chirps">--</b></div>
+          <div><span class="label">Above room noise</span><b id="snr">--<span>dB</span></b></div>
+        </div>
+      </div>
+      <div class="meta" id="earMeta"><span>No ear check yet</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="sides" role="radiogroup" aria-label="Which ear">
+        <button type="button" role="radio" id="sideLeft" aria-checked="true">Left ear</button>
+        <button type="button" role="radio" id="sideRight" aria-checked="false">Right ear</button>
+      </div>
+      <div class="status" id="earStatus">Check how the eardrum echoes sound, with a paper cone and 5 seconds of chirps.</div>
+      <div class="progress" id="earProgressWrap" hidden><i id="earProgress"></i></div>
+      <div class="notice" id="earNotice" hidden></div>
+      <div class="actions" id="earActions">
+        <button class="primary" id="earBtn" type="button">Start ear check</button>
+        <a class="filebtn" id="coneLink" download="jeevaflow-ear-cone.svg" href="#">Download paper cone</a>
+      </div>
+      <div class="actions" id="earResult" hidden>
+        <button class="primary" id="earSave" type="button">Save check</button>
+        <button id="earAgain" type="button">Check again</button>
+      </div>
+    </div>
+
+    <section class="two">
+      <div>
+        <h2>Make the cone</h2>
+        <ol class="steps">
+          <li>Download the cone and print it at 100% size. The scale bar should measure 5 cm.</li>
+          <li>Cut it out and roll it so the narrow end is about 8 mm across. Tape it along the glue tab.</li>
+          <li>Tape the wide end over the bottom edge of the phone so it covers both the speaker and the microphone.</li>
+        </ol>
+      </div>
+      <div>
+        <h2>Check an ear</h2>
+        <ol class="steps">
+          <li>Find a quiet room. Set the phone volume to about half and disconnect Bluetooth earphones.</li>
+          <li>Rest the narrow end gently at the opening of the ear. <b>Never push it into the ear.</b></li>
+          <li>Tap <b>Start ear check</b> and keep still for 5 seconds of soft chirps. Stop if the child is upset.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section>
+      <h2>What the curve means</h2>
+      <p class="fine" style="margin:0 0 8px">
+        A healthy eardrum vibrates and absorbs part of the sound, which shows as a <b>dip</b> in the curve. Fluid behind
+        the eardrum stiffens it and tends to flatten the dip (University of Washington, Chan et al.,
+        <i>Science Translational Medicine</i>, 2019).
+      </p>
+      <p class="fine" style="margin:0">
+        This page has <b>not</b> been calibrated against ears checked by a doctor, so it shows the curve but does not say
+        whether there is fluid. It is most useful for comparing the two ears, or the same ear over days, on the same
+        phone. Curves from different phones cannot be compared. Works best in Chrome on Android; on some iPhones the
+        sound may come from the top earpiece while the microphone is on, and the chirps may not be heard.
+      </p>
+    </section>
+
+    <section>
+      <div class="histhead">
+        <h2>Your ear checks</h2>
+        <button class="quiet" id="earClear" type="button" hidden>Delete all</button>
+      </div>
+      <div class="confirm" id="earClearConfirm" hidden>
+        Delete every ear check saved in this browser?
+        <button class="primary" id="earClearYes" type="button">Delete</button>
+        <button class="quiet" id="earClearNo" type="button">Keep</button>
+      </div>
+      <table id="earHistory" hidden>
+        <thead><tr><th>When</th><th>Ear</th><th>Dip at</th><th>Depth</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="fine" id="earNoHistory">No ear checks yet. Saved checks stay in this browser only.</p>
+    </section>
+
+    <div class="notice">
+      <b>Not a diagnosis.</b> See a doctor if a child has ear pain, fever, fluid coming from the ear, trouble hearing,
+      or seems unwell, whatever this curve shows. Sound is processed on this device and never uploaded or saved.
+    </div>
+  </div>
+
   <section class="research" aria-labelledby="researchHead">
     <h2 id="researchHead">Research preview: not measured here</h2>
     <p class="fine" style="margin:0">
@@ -304,6 +406,7 @@
 <canvas id="grabFace" width="120" height="160" hidden></canvas>
 
 <script src="ppg.js"></script>
+<script src="ear.js"></script>
 <script>
 (() => {
   'use strict';
@@ -407,10 +510,15 @@
 
   // ------------------------------------------------------------------ ui
   function setMode(next) {
-    if (run || mode === next) return;
+    if (run || earRun || mode === next) return;
     mode = next;
     $('tabFinger').setAttribute('aria-selected', String(mode === 'finger'));
     $('tabFace').setAttribute('aria-selected', String(mode === 'face'));
+    $('tabEar').setAttribute('aria-selected', String(mode === 'ear'));
+    $('pulseUi').hidden = mode === 'ear';
+    $('earUi').hidden = mode !== 'ear';
+    els.chip.hidden = mode === 'ear';
+    if (mode === 'ear') { drawEcho(); return; }
     $('fingerSteps').hidden = mode !== 'finger';
     $('faceSteps').hidden = mode !== 'face';
     els.videoInput.setAttribute('capture', mode === 'face' ? 'user' : 'environment');
@@ -701,10 +809,263 @@
     $('clearBtn').hidden = !list.length;
   }
 
+  // --------------------------------------------------------------- ear echo
+  const EAR_KEY = 'jf.ear.readings', EAR_LEVEL = 0.3;
+  let earRun = null, earSide = 'left', earLast = null;
+
+  function earStatus(text) { $('earStatus').textContent = text; }
+  function earNotice(text) {
+    const n = $('earNotice');
+    n.hidden = !text; n.innerHTML = '';
+    if (text) { const b = document.createElement('b'); b.textContent = 'Note: '; n.append(b, text); }
+  }
+  function earPhase(phase) {
+    $('earActions').hidden = phase !== 'idle';
+    $('earResult').hidden = phase !== 'result';
+    $('earProgressWrap').hidden = phase !== 'running';
+    $('sideLeft').disabled = $('sideRight').disabled = phase === 'running';
+  }
+  function setSide(side) {
+    earSide = side;
+    $('sideLeft').setAttribute('aria-checked', String(side === 'left'));
+    $('sideRight').setAttribute('aria-checked', String(side === 'right'));
+  }
+
+  function loadEar() { try { return JSON.parse(localStorage.getItem(EAR_KEY) || '[]'); } catch { return []; } }
+  function saveEar(list) { try { localStorage.setItem(EAR_KEY, JSON.stringify(list)); return true; } catch { return false; } }
+
+  /** Echo curves: this check, plus the latest saved check of each ear. */
+  function drawEcho() {
+    const c = $('echo'), dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+    if (!w || !h) return;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = css('--surface'); g.fillRect(0, 0, w, h);
+
+    const saved = loadEar();
+    const curves = [];
+    if (earLast) curves.push({ label: `This check (${earLast.side})`, db: earLast.db, freqs: earLast.freqs, color: css('--trace'), width: 2.5, dip: earLast.dip });
+    for (const side of ['left', 'right']) {
+      const s = saved.find((r) => r.ear === side);
+      if (s) curves.push({ label: `Saved ${side}`, db: s.curve, freqs: s.curve.map((_, i) => s.f0 + i * s.step), color: side === 'left' ? css('--accent') : css('--muted'), width: 1.5, dash: side === 'right' ? [5, 4] : [] });
+    }
+
+    const L = 36, R = 10, T = 26, B = 22, x0 = Ear.BAND[0], x1 = Ear.BAND[1];
+    const all = curves.flatMap((k) => k.db);
+    let lo = Math.min(-6, ...all), hi = Math.max(6, ...all);
+    lo = Math.floor(lo / 3) * 3; hi = Math.ceil(hi / 3) * 3;
+    const X = (f) => L + (f - x0) / (x1 - x0) * (w - L - R);
+    const Y = (d) => T + (hi - d) / (hi - lo) * (h - T - B);
+
+    g.font = `500 11px ${css('--font-read')}`; g.fillStyle = css('--muted'); g.strokeStyle = css('--line'); g.lineWidth = 1;
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let d = lo; d <= hi; d += 3) {
+      g.beginPath(); g.moveTo(L, Math.round(Y(d)) + 0.5); g.lineTo(w - R, Math.round(Y(d)) + 0.5); g.stroke();
+      if ((d - lo) % 6 === 0) g.fillText(`${d > 0 ? '+' : ''}${d}`, L - 6, Y(d));
+    }
+    g.textAlign = 'center'; g.textBaseline = 'top';
+    for (const f of [2000, 2500, 3000, 3500, 4000]) g.fillText(`${f / 1000} kHz`, X(f), h - B + 6);
+
+    if (!curves.length) {
+      g.textBaseline = 'middle'; g.font = `400 14px ${css('--font-body')}`;
+      g.fillText('The echo curve will appear here', (L + w - R) / 2, (T + h - B) / 2);
+      return;
+    }
+    for (const k of curves) {
+      g.strokeStyle = k.color; g.lineWidth = k.width; g.setLineDash(k.dash || []); g.lineJoin = 'round';
+      g.beginPath();
+      k.db.forEach((d, i) => (i ? g.lineTo(X(k.freqs[i]), Y(d)) : g.moveTo(X(k.freqs[i]), Y(d))));
+      g.stroke();
+    }
+    g.setLineDash([]);
+    const first = curves[0];
+    if (first.dip && first.dip.depthDb >= 1) {
+      const i = first.freqs.indexOf(first.dip.hz);
+      g.fillStyle = first.color; g.beginPath(); g.arc(X(first.dip.hz), Y(first.db[i]), 4, 0, 7); g.fill();
+    }
+    // Legend
+    g.textAlign = 'left'; g.textBaseline = 'middle'; g.font = `400 12px ${css('--font-body')}`;
+    let lx = L;
+    for (const k of curves) {
+      g.strokeStyle = k.color; g.lineWidth = k.width; g.setLineDash(k.dash || []);
+      g.beginPath(); g.moveTo(lx, 12); g.lineTo(lx + 16, 12); g.stroke(); g.setLineDash([]);
+      g.fillStyle = css('--ink'); g.fillText(k.label, lx + 20, 12);
+      lx += 28 + g.measureText(k.label).width;
+    }
+  }
+
+  function showEcho(r) {
+    $('chirps').textContent = `${r.chirpsHeard}/${r.expected}`;
+    $('snr').innerHTML = r.snrDb == null ? '--<span>dB</span>' : `${Math.round(r.snrDb)}<span>dB</span>`;
+    const meta = $('earMeta'); meta.innerHTML = '';
+    if (r.verdict !== 'ok') {
+      $('dipDb').textContent = '--'; $('dipHz').textContent = 'at -- kHz';
+      const s = document.createElement('span'); s.textContent = 'No echo curve this time'; meta.append(s);
+      return;
+    }
+    $('dipDb').textContent = r.dip.depthDb.toFixed(1);
+    $('dipHz').textContent = r.dip.depthDb >= 1 ? `at ${(r.dip.hz / 1000).toFixed(2)} kHz` : 'no clear dip';
+    for (const text of [`${r.side === 'left' ? 'Left' : 'Right'} ear`, `Chirps agreed within ${r.consistencyDb.toFixed(1)} dB`]) {
+      const s = document.createElement('span'); s.textContent = text; meta.append(s);
+    }
+  }
+
+  async function startEar() {
+    earNotice('');
+    // Created inside the tap so phones allow sound.
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      earNotice('This browser cannot play and record sound here. Open the page in Chrome or Safari over https.');
+      return;
+    }
+    const ctx = new Ctx();
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: false,
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+      });
+    } catch (e) {
+      ctx.close();
+      earNotice(e && e.name === 'NotAllowedError'
+        ? 'Microphone access was refused. Allow the microphone for this page in your browser settings.'
+        : 'The microphone could not be opened here. Open the page in Chrome or Safari over https.');
+      return;
+    }
+    try { await ctx.resume(); } catch { /* resumes on its own */ }
+
+    const sr = ctx.sampleRate, chunks = [];
+    const src = ctx.createMediaStreamSource(stream);
+    const rec = ctx.createScriptProcessor(4096, 1, 1);
+    rec.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    src.connect(rec); rec.connect(ctx.destination);   // outputs silence; needed for it to run
+
+    const tpl = Ear.chirp(sr), buf = ctx.createBuffer(1, tpl.length, sr);
+    buf.getChannelData(0).set(tpl);
+    const gain = ctx.createGain(); gain.gain.value = EAR_LEVEL; gain.connect(ctx.destination);
+    const lead = 0.6, total = lead + Ear.COUNT * Ear.PERIOD_MS / 1000 + 0.5;
+    const t0 = ctx.currentTime + lead, sources = [];
+    for (let k = 0; k < Ear.COUNT; k++) {
+      const s = ctx.createBufferSource(); s.buffer = buf; s.connect(gain); s.start(t0 + k * Ear.PERIOD_MS / 1000); sources.push(s);
+    }
+
+    const side = earSide;
+    earPhase('running');
+    earStatus(`Chirping into the ${side} ear. Keep still…`);
+    const began = performance.now();
+    const timer = setInterval(() => { $('earProgress').style.width = `${Math.min(1, (performance.now() - began) / 1000 / total) * 100}%`; }, 100);
+
+    const teardown = () => {
+      clearInterval(timer);
+      sources.forEach((s) => { try { s.stop(); } catch { /* already stopped */ } });
+      rec.onaudioprocess = null;
+      try { src.disconnect(); rec.disconnect(); } catch { /* already disconnected */ }
+      stream.getTracks().forEach((t) => t.stop());
+      ctx.close().catch(() => {});
+      earRun = null;
+    };
+    const done = setTimeout(() => {
+      teardown();
+      const n = chunks.reduce((a, c) => a + c.length, 0), all = new Float32Array(n);
+      let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
+      earStatus('Working out the echo…');
+      setTimeout(() => {
+        const r = Object.assign(Ear.analyzeEcho(all, sr), { side });
+        earLast = r.verdict === 'ok' ? r : null;
+        showEcho(r);
+        drawEcho();
+        if (r.verdict === 'ok') {
+          earPhase('result');
+          $('earSave').disabled = false; $('earSave').textContent = 'Save check';
+          earStatus(r.dip.depthDb >= 1
+            ? `Echo recorded: the deepest dip is ${r.dip.depthDb.toFixed(1)} dB at ${(r.dip.hz / 1000).toFixed(2)} kHz.`
+            : 'Echo recorded: the curve has no clear dip.');
+        } else {
+          earPhase('idle');
+          earStatus('No echo curve this time.');
+          earNotice(r.problem);
+        }
+      }, 30);
+    }, total * 1000);
+
+    earRun = {
+      cancel(message) {
+        clearTimeout(done); teardown(); earPhase('idle'); earStatus('Stopped. Start again when you are ready.');
+        if (message) earNotice(message);
+      },
+    };
+  }
+
+  function renderEarHistory() {
+    const list = loadEar(), table = $('earHistory'), body = table.querySelector('tbody');
+    body.innerHTML = '';
+    for (const r of list.slice(0, 20)) {
+      const tr = document.createElement('tr');
+      const when = new Date(r.at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+      const cells = [[when, false], [r.ear === 'left' ? 'Left' : 'Right', false],
+        [r.depthDb >= 1 ? `${(r.dipHz / 1000).toFixed(2)} kHz` : '--', true], [`${r.depthDb.toFixed(1)} dB`, true]];
+      for (const [text, num] of cells) { const td = document.createElement('td'); td.textContent = text; if (num) td.className = 'num'; tr.append(td); }
+      body.append(tr);
+    }
+    table.hidden = !list.length;
+    $('earNoHistory').hidden = !!list.length;
+    $('earClear').hidden = !list.length;
+  }
+
+  /** Printable cone: a 120° ring segment that rolls into a cone with an 8 mm tip. */
+  function coneSvg() {
+    const cx = 100, cy = 12, R = 100, r = 12;
+    const P = (rad, deg) => `${(cx + rad * Math.cos(deg * Math.PI / 180)).toFixed(2)} ${(cy + rad * Math.sin(deg * Math.PI / 180)).toFixed(2)}`;
+    const seg = (a, b) => `M ${P(r, a)} L ${P(R, a)} A ${R} ${R} 0 0 1 ${P(R, b)} L ${P(r, b)} A ${r} ${r} 0 0 0 ${P(r, a)} Z`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="150mm" viewBox="0 0 200 150" font-family="sans-serif">
+<path d="${seg(150, 162)}" fill="#eee" stroke="#000" stroke-width="0.3" stroke-dasharray="2 1.5"/>
+<path d="${seg(30, 150)}" fill="none" stroke="#000" stroke-width="0.4"/>
+<text transform="translate(${P(66, 156)}) rotate(-24)" font-size="3.2" text-anchor="middle" dominant-baseline="middle">tape here</text>
+<text x="100" y="70" font-size="5" text-anchor="middle">JeevaFlow ear cone</text>
+<text x="100" y="77" font-size="3.4" text-anchor="middle">Cut along the solid line. Roll so the narrow end is about 8 mm across.</text>
+<text x="100" y="82" font-size="3.4" text-anchor="middle">Tape the wide end over the phone's speaker and microphone.</text>
+<line x1="140" y1="138" x2="190" y2="138" stroke="#000" stroke-width="0.6"/>
+<line x1="140" y1="135.5" x2="140" y2="140.5" stroke="#000" stroke-width="0.4"/><line x1="190" y1="135.5" x2="190" y2="140.5" stroke="#000" stroke-width="0.4"/>
+<text x="165" y="145" font-size="3.4" text-anchor="middle">50 mm: check before cutting</text>
+<text x="10" y="145" font-size="3.4">Print at 100% (actual size)</text>
+</svg>`;
+  }
+
+  $('coneLink').href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(coneSvg());
+  $('sideLeft').addEventListener('click', () => setSide('left'));
+  $('sideRight').addEventListener('click', () => setSide('right'));
+  $('earBtn').addEventListener('click', startEar);
+  $('earAgain').addEventListener('click', () => { earPhase('idle'); earNotice(''); earStatus('Choose the ear, then start.'); });
+  $('earSave').addEventListener('click', () => {
+    if (!earLast) return;
+    const list = loadEar();
+    list.unshift({
+      at: new Date().toISOString(), ear: earLast.side, dipHz: earLast.dip.hz, depthDb: Math.round(earLast.dip.depthDb * 10) / 10,
+      f0: earLast.freqs[0], step: earLast.freqs[1] - earLast.freqs[0], curve: earLast.db.map((d) => Math.round(d * 10) / 10),
+      method: 'ear-echo-v1',
+    });
+    if (saveEar(list.slice(0, 40))) {
+      $('earSave').disabled = true; $('earSave').textContent = 'Saved';
+      renderEarHistory(); drawEcho();
+    } else {
+      earNotice('This browser is not keeping data for this page (for example, a private window), so the check was not saved.');
+    }
+  });
+  $('earClear').addEventListener('click', () => { $('earClearConfirm').hidden = false; });
+  $('earClearNo').addEventListener('click', () => { $('earClearConfirm').hidden = true; });
+  $('earClearYes').addEventListener('click', () => {
+    try { localStorage.removeItem(EAR_KEY); } catch { /* nothing stored */ }
+    $('earClearConfirm').hidden = true;
+    renderEarHistory(); drawEcho();
+  });
+  renderEarHistory();
+
   // --------------------------------------------------------------- wiring
   $('liveBtn').addEventListener('click', startLive);
   $('tabFinger').addEventListener('click', () => setMode('finger'));
   $('tabFace').addEventListener('click', () => setMode('face'));
+  $('tabEar').addEventListener('click', () => setMode('ear'));
   $('videoInput').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
@@ -740,12 +1101,13 @@
     renderHistory();
   });
   document.addEventListener('visibilitychange', () => {
+    if (document.hidden && earRun) earRun.cancel('The ear check stopped because the page was hidden. Start again when ready.');
     if (document.hidden && run && run.mode === 'live') {
       stop();
       notice('The check stopped because the page was hidden. Start again when ready.');
     }
   });
-  window.addEventListener('resize', () => lastShown && showResult(lastShown.r, lastShown.o));
+  window.addEventListener('resize', () => { if (lastShown) showResult(lastShown.r, lastShown.o); if (mode === 'ear') drawEcho(); });
 
   // Opening state: an example reading from a synthetic 72 bpm pulse,
   // marked "Example reading" until the viewer measures their own.
@@ -768,7 +1130,7 @@
   showResult = (r, o) => { lastShown = { r, o }; origShow(r, o); };
   showResult(Ppg.analyze(exampleSamples()), { example: true });
   renderHistory();
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => lastShown && origShow(lastShown.r, lastShown.o));
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (lastShown) origShow(lastShown.r, lastShown.o); if (mode === 'ear') drawEcho(); });
 })();
 </script>
 

@@ -17,6 +17,11 @@ Part of the JeevaFlow Sentinel project.
 **Stress.** From fingertip HRV, compared with your own usual once 3 fingertip readings are saved: "higher", "usual"
 or "lower" than usual. HRV differs too much between people for a fixed threshold.
 
+**Ear echo.** Print the paper cone from the page, tape it over the phone's speaker and microphone, rest the tip at
+the opening of the ear (never push it in) and play 5 seconds of soft chirps. The page shows the echo curve and its
+deepest dip, and can compare left and right ears or the same ear over time. It does **not** say whether there is fluid
+behind the eardrum: that needs a threshold learned from doctor-checked ears. Works best in Chrome on Android.
+
 ## How it works
 
 Each heartbeat pushes blood into the fingertip, which absorbs a little more light, so the camera image gets slightly
@@ -31,6 +36,11 @@ darker once per beat. The page averages the red colour of each frame and process
 For the face, the page averages the colour of skin-coloured pixels inside the oval and uses the POS method (Wang
 et al., IEEE TBME 2017) to cancel lighting changes common to all colour channels, leaving the pulse.
 
+For the ear (`ear.js`), the page plays ten 150 ms chirps (1.8–4.4 kHz), finds each one in the recording by
+cross-correlation, divides the recorded spectrum by the played one, and averages the chirps. A healthy eardrum absorbs
+part of the sound and leaves a dip; fluid tends to flatten it (Chan et al., Science Translational Medicine, 2019).
+Too few chirps heard, a noisy room, clipping or chirps that disagree (a moving cone) give no curve.
+
 ## Not measured: blood oxygen, anaemia, newborn jaundice
 
 Phones can screen for these in research (UW's oximetry study, HemaApp and BiliCam), but each needs a model calibrated
@@ -44,7 +54,7 @@ storage and can be deleted on the page.
 ## Tests
 
 ```bash
-node --test ppg.test.js
+node --test ppg.test.js ear.test.js
 ```
 
 Synthetic pulses at 50–130 bpm are measured within ±2 bpm; noise, motion, an uncovered camera and short recordings
