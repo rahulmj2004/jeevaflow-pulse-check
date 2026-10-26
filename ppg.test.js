@@ -160,3 +160,72 @@ test('stress is only shown against the person\'s own usual HRV', () => {
   assert.equal(Ppg.stressVsUsual(22, [42, 38, 41, 39]).level, 'higher');
   assert.equal(Ppg.stressVsUsual(65, [42, 38, 41, 39]).level, 'lower');
 });
+
+// ---- Heart rhythm (AFib) ----
+
+/** Beat-to-beat intervals: random and independent, as in atrial fibrillation. */
+function afibIntervals(meanMs, spread, seed, n = 80) {
+  const rand = rng(seed);
+  return Array.from({ length: n }, () => meanMs * (1 + spread * 2 * (rand() - 0.5)));
+}
+
+test('rhythm: steady and breathing-modulated hearts are regular', () => {
+  for (const bpm of [55, 72, 100]) {
+    const r = Ppg.rhythm(synthetic({ intervals: [60000 / bpm] }));
+    assert.equal(r.verdict, 'ok', r.problem);
+    assert.equal(r.rhythm, 'regular', `${bpm}: nRmssd ${r.nRmssd} share ${r.irregularShare}`);
+    assert.ok(Math.abs(r.heartRate - bpm) <= 3, `hr ${r.heartRate}`);
+  }
+  // Sinus arrhythmia: intervals swing ±8% with each breath (5 beats), a healthy pattern.
+  const rsa = Array.from({ length: 5 }, (_, k) => 900 * (1 + 0.08 * Math.sin(2 * Math.PI * k / 5)));
+  const r = Ppg.rhythm(synthetic({ intervals: rsa, seed: 4 }));
+  assert.equal(r.verdict, 'ok', r.problem);
+  assert.notEqual(r.rhythm, 'irregular', `nRmssd ${r.nRmssd} share ${r.irregularShare}`);
+});
+
+test('rhythm: atrial fibrillation is irregular, where the pulse reading gives up', () => {
+  for (const [mean, seed] of [[650, 1], [800, 2], [950, 3]]) {
+    const samples = synthetic({ intervals: afibIntervals(mean, 0.5, seed), seed });
+    const r = Ppg.rhythm(samples);
+    assert.equal(r.verdict, 'ok', r.problem);
+    assert.equal(r.rhythm, 'irregular', `mean ${mean}: nRmssd ${r.nRmssd} share ${r.irregularShare}`);
+    assert.ok(Math.abs(r.heartRate - 60000 / mean) <= 8, `hr ${r.heartRate}`);
+  }
+});
+
+test('rhythm: an occasional early beat is not called irregular', () => {
+  const intervals = [800, 800, 800, 800, 800, 800, 520, 1080, 800, 800, 800, 800];
+  const r = Ppg.rhythm(synthetic({ intervals, seed: 6 }));
+  assert.equal(r.verdict, 'ok', r.problem);
+  assert.equal(r.rhythm, 'early-beats', `nRmssd ${r.nRmssd}`);
+  assert.ok(r.earlyBeats >= 2);
+});
+
+test('rhythm: movement and noise ask for a retake, never "irregular"', () => {
+  const jolt = rng(9);
+  for (let trial = 0; trial < 5; trial++) {
+    let offset = 0, next = 0;
+    const shaken = synthetic({ intervals: [800], seed: trial + 20 }).map((s) => {
+      if (s.t >= next) { offset = (jolt() - 0.5) * 16; next = s.t + 300 + jolt() * 400; }
+      return { ...s, red: s.red + offset };
+    });
+    const r = Ppg.rhythm(shaken);
+    assert.notEqual(r.rhythm, 'irregular', `trial ${trial} read as irregular`);
+  }
+  const rand = rng(3);
+  const noise = Array.from({ length: 900 }, (_, i) => ({ t: i * 33.3, red: 200 + 2 * (rand() - 0.5), green: 40 }));
+  assert.equal(Ppg.rhythm(noise).verdict, 'retake');
+  assert.match(Ppg.rhythm(synthetic({ intervals: [800], seconds: 15 })).problem, /too short/);
+});
+
+test('rhythm: across 40 runs each, a normal heart is never called irregular', () => {
+  for (let seed = 1; seed <= 40; seed++) {
+    const noisy = Ppg.rhythm(synthetic({ intervals: [600 + seed * 15], amplitude: 0.6, noise: 0.25, seed }));
+    assert.ok(noisy.verdict === 'retake' || noisy.rhythm === 'regular', `noisy seed ${seed}: ${noisy.rhythm}`);
+    // Strong sinus arrhythmia (±12%) following slightly uneven breathing.
+    const rand = rng(seed + 100), iv = [];
+    for (let i = 0, ph = 0; i < 60; i++) { ph += 2 * Math.PI / (4 + 3 * rand()); iv.push((700 + seed * 10) * (1 + 0.12 * Math.sin(ph))); }
+    assert.equal(Ppg.rhythm(synthetic({ intervals: iv, seed })).rhythm, 'regular', `sinus arrhythmia seed ${seed}`);
+    assert.equal(Ppg.rhythm(synthetic({ intervals: afibIntervals(500 + seed * 15, 0.4, seed), seed })).rhythm, 'irregular', `AF seed ${seed}`);
+  }
+});

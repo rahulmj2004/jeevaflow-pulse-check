@@ -24,6 +24,25 @@ deepest dip, and highlights a provisional result: **Looks normal** (dip ≥ 5 dB
 have **not** been calibrated against doctor-checked ears, so the result is a screening hint, not a diagnosis. The paper
 cone is required: without it the curve comes out flat. Works best in Chrome on Android.
 
+**Heart rhythm (AFib).** Every fingertip reading also checks the rhythm (`Ppg.rhythm`): **Regular**, **A few early
+beats**, **Unclear** or **Irregular: possible atrial fibrillation**. Each beat must match the shape of a typical beat
+(template matching), so finger movement asks for a retake instead of looking irregular; breathing-linked speeding up and
+slowing down (sinus arrhythmia) is recognised as a regular, repeating pattern. Cut-offs are provisional, not checked
+against ECGs; only an ECG can confirm AFib.
+
+**Tremor.** Hold the phone for 20 seconds, resting or with the arm out. The motion sensor gives the shake speed
+(per second), strength (m/s²) and size (mm), with a provisional None / Mild / Strong result (`motion.js`).
+
+**Stroke check (FAST).** Face: the selfie camera and MediaPipe face landmarks (run on the phone) compare how much each
+mouth corner lifts in a smile. Arms: the phone, flat on the palm with eyes closed, measures how far each arm tilts in 10
+seconds. Speech: judged by the person helping. Any sign shows **call 108 now**; a normal result never rules out a stroke.
+
+**Sleep.** The phone plays 18–20 kHz tones and tracks the echo from the chest (`sonar.js`, after ApneaApp, MobiSys
+2015) to show breathing rate and count pauses of 10 seconds or more, per hour of tracking. Not a sleep study. "Try it
+awake" runs a 90-second demo: breathe, hold your breath for 15 seconds, and watch it find the pause.
+
+All new cut-offs are provisional, and nothing is uploaded: sound, video and motion are processed on the phone.
+
 ## How it works
 
 Each heartbeat pushes blood into the fingertip, which absorbs a little more light, so the camera image gets slightly
@@ -56,7 +75,7 @@ storage and can be deleted on the page.
 ## Tests
 
 ```bash
-node --test ppg.test.js ear.test.js
+node --test ppg.test.js ear.test.js motion.test.js stroke.test.js sonar.test.js
 ```
 
 Synthetic pulses at 50–130 bpm are measured within ±2 bpm; noise, motion, an uncovered camera and short recordings

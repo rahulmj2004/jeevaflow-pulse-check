@@ -351,7 +351,122 @@
     return { level, z, baselineMs: Math.exp(mean), readings: past.length };
   }
 
+  /**
+   * Heart rhythm from a fingertip recording: regular, irregular (as in
+   * atrial fibrillation), or regular with a few early beats.
+   *
+   * Unlike analyze(), this does not assume beats are evenly spaced, so it
+   * cannot use spacing to reject noise. Instead each beat must look like
+   * a pulse: its shape is compared with the median beat (template
+   * matching), and beats that are too small, too large or misshapen are
+   * dropped along with the intervals on either side. Too many dropped
+   * beats means movement, not an irregular heart.
+   *
+   * The irregularity test uses beat-to-beat changes (RMSSD as a fraction
+   * of the mean interval, and the share of changes above 10%). The
+   * cut-offs are provisional; they have not been checked against ECGs.
+   */
+  const IRREGULAR_NRMSSD = 0.1, IRREGULAR_SHARE = 0.45, MIN_RHYTHM_INTERVALS = 15, MIN_BEAT_CORR = 0.7, MIN_JUDGE_CORR = 0.85, PERIODIC_SHARE = 0.65;
+  function rhythm(samples) {
+    const raw = resample(samples);
+    const duration = raw.length / SAMPLE_RATE;
+    const retake = (problem) => ({ verdict: 'retake', problem, durationSeconds: duration });
+    if (duration < 25) return retake('The recording was too short to judge the rhythm. Keep still for the full 30 seconds.');
+    const covered = samples.filter((s) => fingerCovers(s.red, s.green)).length / samples.length;
+    if (covered < 0.9) return retake('The camera was not fully covered. Rest your fingertip gently over the camera and flash.');
+
+    const filtered = bandpass(raw.map((v) => -v));
+    const wave = filtered.slice(SAMPLE_RATE, filtered.length - SAMPLE_RATE);
+    const before = Math.round(0.2 * SAMPLE_RATE), after = Math.round(0.3 * SAMPLE_RATE);
+    // Keep the sub-frame peak times for the intervals; round only to index samples.
+    const candidates = findPeaks(wave, Math.round(0.33 * SAMPLE_RATE))
+      .filter((t) => Math.round(t) - before >= 0 && Math.round(t) + after < wave.length);
+    if (candidates.length < MIN_RHYTHM_INTERVALS) return retake('Not enough clear heartbeats were found. Keep your hand still and try again.');
+
+    // Height above the trough before each beat, then drop small bumps.
+    const height = (t) => { const p = Math.round(t); return wave[p] - Math.min(...wave.slice(Math.max(0, p - Math.round(0.4 * SAMPLE_RATE)), p)); };
+    const heights = candidates.map(height);
+    const typical = median(heights);
+    const peaks = candidates.filter((p, i) => heights[i] >= 0.35 * typical);
+
+    const segment = (t) => {
+      const p = Math.round(t), seg = wave.slice(p - before, p + after + 1);
+      const m = seg.reduce((a, b) => a + b, 0) / seg.length, sd = std(seg) || 1;
+      return seg.map((v) => (v - m) / sd);
+    };
+    const segs = peaks.map(segment);
+    const template = segs[0].map((_, k) => median(segs.map((s) => s[k])));
+    const corr = segs.map((s) => s.reduce((acc, v, k) => acc + v * template[k], 0) / s.length);
+    const ok = peaks.map((p, i) => corr[i] >= MIN_BEAT_CORR && height(p) <= 3 * typical);
+    const goodShare = ok.filter(Boolean).length / peaks.length;
+    if (goodShare < 0.8) return retake('The finger or phone moved during the recording. Rest your hand on a table, keep still, and try again.');
+
+    const intervals = [];
+    for (let i = 1; i < peaks.length; i++) {
+      if (ok[i] && ok[i - 1]) intervals.push((peaks[i] - peaks[i - 1]) / SAMPLE_RATE * 1000);
+    }
+    if (intervals.length < MIN_RHYTHM_INTERVALS) return retake('Not enough clean heartbeats in a row. Keep still and try again.');
+    if (intervals.some((ms) => ms > 2000)) return retake('A beat seems to be missing. Press a little more lightly and try again.');
+
+    const irregularity = (rr) => {
+      const mean = rr.reduce((a, b) => a + b, 0) / rr.length;
+      const diffs = rr.slice(1).map((v, i) => v - rr[i]);
+      const rmssd = Math.sqrt(diffs.reduce((acc, d) => acc + d * d, 0) / diffs.length);
+      return { nRmssd: rmssd / mean, share: diffs.filter((d) => Math.abs(d) > 0.1 * mean).length / diffs.length };
+    };
+    // Breathing makes a healthy heart speed up and slow down in a smooth,
+    // repeating wave (sinus arrhythmia). Atrial fibrillation has no such
+    // pattern. Share of the interval variance in the strongest rhythm:
+    // near 1 for a breathing wave, low for random intervals.
+    const periodicShare = (rr) => {
+      const n = rr.length, mean = rr.reduce((a, b) => a + b, 0) / n, x = rr.map((v) => v - mean);
+      const power = [];
+      for (let k = 1; k <= n / 2; k++) {
+        let re = 0, im = 0;
+        for (let i = 0; i < n; i++) { re += x[i] * Math.cos(2 * Math.PI * k * i / n); im -= x[i] * Math.sin(2 * Math.PI * k * i / n); }
+        power.push(re * re + im * im);
+      }
+      const total = power.reduce((a, b) => a + b, 0) || 1;
+      let best = 0;
+      for (let k = 0; k < power.length; k++) best = Math.max(best, (power[k - 1] || 0) + power[k] + (power[k + 1] || 0));
+      return best / total;
+    };
+
+    // An early (ectopic) beat: a short interval followed by a long,
+    // compensating one. Set those pairs aside and look at the rest.
+    const med = median(intervals);
+    const early = [];
+    for (let i = 0; i + 1 < intervals.length; i++) {
+      if (intervals[i] < 0.8 * med && intervals[i + 1] > 1.12 * med) { early.push(i); i++; }
+    }
+    const rest = intervals.filter((_, i) => !early.some((e) => i === e || i === e + 1));
+    const all = irregularity(intervals), base = irregularity(rest.length >= 10 ? rest : intervals);
+    const periodic = periodicShare(rest.length >= 10 ? rest : intervals);
+    const isIrregular = (m) => m.nRmssd >= IRREGULAR_NRMSSD && m.share >= IRREGULAR_SHARE && periodic < PERIODIC_SHARE;
+    const isBorderline = (m) => m.nRmssd >= 0.7 * IRREGULAR_NRMSSD && m.share >= 0.7 * IRREGULAR_SHARE && periodic < PERIODIC_SHARE;
+
+    let result;
+    if (isIrregular(base) || early.length > intervals.length / 4) result = 'irregular';
+    else if (isBorderline(base)) result = 'unclear';
+    else if (early.length) result = 'early-beats';
+    else result = 'regular';
+
+    // Noise only ever makes a rhythm look less regular, so a regular result
+    // stands on a weaker signal, but anything else needs clean beats.
+    const signalCorr = corr.filter((_, i) => ok[i]).reduce((a, b) => a + b, 0) / ok.filter(Boolean).length;
+    if (result !== 'regular' && signalCorr < MIN_JUDGE_CORR) {
+      return retake('The pulse signal was too weak to judge the rhythm. Press lightly, keep still, and try again.');
+    }
+
+    const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+    return {
+      verdict: 'ok', rhythm: result, heartRate: 60000 / mean, intervals, earlyBeats: early.length,
+      nRmssd: all.nRmssd, irregularShare: all.share, periodicShare: periodic, signalCorr, beatQuality: goodShare, durationSeconds: duration,
+    };
+  }
+
   const api = {
+    rhythm, IRREGULAR_NRMSSD, IRREGULAR_SHARE,
     stressVsUsual, SAMPLE_RATE, fingerCovers, resample, bandpass, findPeaks, spectrum, analyze, analyzeFace, pos,
     liveBandpass, averageRgba, averageFace, isSkin,
   };

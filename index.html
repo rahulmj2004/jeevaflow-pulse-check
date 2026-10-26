@@ -112,6 +112,9 @@
   .verdict.flat { background: var(--bad-soft); border-color: var(--bad); }
   .verdict.flat strong { color: var(--bad); }
   .chip.bad { background: var(--bad-soft); color: var(--bad); }
+  .tacho { display: block; width: 100%; height: 64px; margin-top: 10px; overflow: visible; }
+  .tacho circle { fill: var(--trace); }
+  .tacho line { stroke: var(--line); stroke-width: 1; }
   .verdict .conf { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .instrument.example .big, .instrument.example .minor b { opacity: .4; }
 
@@ -145,6 +148,15 @@
   .confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
 
   [hidden] { display: none !important; }
+  a.callbtn { background: var(--bad); border-color: var(--bad); color: #fff; font-size: 18px; }
+  .mini { font-size: 15px; font-weight: 700; min-height: 1.4em; }
+  .card .actions { margin-top: 4px; }
+  .card .verdict { margin-top: 4px; }
+  .result-line { font: 600 15px var(--font-read); }
+  .say { font-size: 20px; font-weight: 700; padding: 10px 12px; border-radius: 10px; background: var(--paper); border: 1px dashed var(--line); }
+  .facecam canvas.marks { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); }
+  .dim { position: fixed; inset: 0; background: #000; color: #333; display: grid; place-items: center; font-size: 15px; z-index: 50; }
+  .bigprompt { font-size: 26px; font-weight: 700; text-align: center; padding: 18px 10px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); }
   .stack { display: grid; gap: 18px; }
   .strip.tall { height: 220px; }
   .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -198,6 +210,9 @@
     <button type="button" role="tab" id="tabFinger" aria-selected="true">Fingertip</button>
     <button type="button" role="tab" id="tabFace" aria-selected="false">Face</button>
     <button type="button" role="tab" id="tabEar" aria-selected="false">Ear echo</button>
+    <button type="button" role="tab" id="tabTremor" aria-selected="false">Tremor</button>
+    <button type="button" role="tab" id="tabStroke" aria-selected="false">Stroke check</button>
+    <button type="button" role="tab" id="tabSleep" aria-selected="false">Sleep</button>
   </div>
 
   <div class="stack" id="pulseUi">
@@ -206,6 +221,11 @@
   </div>
 
   <div class="instrument" aria-live="polite">
+    <div class="verdict" id="rhythmBox" hidden><strong id="rhythmHead"></strong><p id="rhythmText"></p>
+      <svg class="tacho" id="rhythmPlot" viewBox="0 0 300 64" preserveAspectRatio="none" role="img" aria-label="Time between beats, one dot per beat"></svg>
+      <p class="fine" id="rhythmPlotNote"></p>
+      <p class="fine">Screening hint from the time between beats, not an ECG. The cut-offs have not yet been checked against ECGs;
+      only an ECG can confirm atrial fibrillation.</p></div>
     <div class="strip">
       <canvas id="trace" aria-label="Pulse wave"></canvas>
       <span class="scale" id="scale">25 mm/s · last 10 s</span>
@@ -304,7 +324,7 @@
       <button class="quiet" id="clearNo" type="button">Keep</button>
     </div>
     <table id="history" hidden>
-      <thead><tr><th>When</th><th>How</th><th>Heart rate</th><th>HRV</th><th>Quality</th></tr></thead>
+      <thead><tr><th>When</th><th>How</th><th>Heart rate</th><th>HRV</th><th>Rhythm</th></tr></thead>
       <tbody></tbody>
     </table>
     <p class="fine" id="noHistory">No readings yet. Saved readings stay in this browser only.</p>
@@ -489,6 +509,192 @@
     </div>
   </div>
 
+  <div class="stack" id="tremorUi" hidden>
+    <div class="instrument" aria-live="polite">
+      <div class="verdict" id="trVerdict" hidden><strong id="trHead"></strong><p id="trText"></p>
+        <p class="fine">Measured with the phone's motion sensor. The strength cut-offs are provisional and have not yet been
+        checked against a neurologist's assessment. Not a diagnosis.</p></div>
+      <div class="strip"><canvas id="trTrace" aria-label="Hand shaking"></canvas><span class="scale" id="trScale">shaking · last 5 s</span></div>
+      <div class="readout">
+        <div class="bpm">
+          <div class="label">Shake speed</div>
+          <div class="big"><span id="trHz">--</span><small>per second</small></div>
+        </div>
+        <div class="minor">
+          <div><span class="label">Strength</span><b id="trRms">--<span>m/s²</span></b></div>
+          <div><span class="label">Size</span><b id="trMm">--<span>mm</span></b></div>
+          <div><span class="label">Steady rhythm</span><b id="trRhythm">--</b></div>
+        </div>
+      </div>
+      <div class="meta" id="trMeta"><span>No tremor check yet</span></div>
+    </div>
+    <div class="panel">
+      <div class="sides" role="radiogroup" aria-label="Which hand">
+        <button type="button" role="radio" id="trLeft" aria-checked="false">Left hand</button>
+        <button type="button" role="radio" id="trRight" aria-checked="true">Right hand</button>
+      </div>
+      <div class="sides" role="radiogroup" aria-label="Hand position">
+        <button type="button" role="radio" id="trRest" aria-checked="true">Resting on lap</button>
+        <button type="button" role="radio" id="trOut" aria-checked="false">Arm held out</button>
+      </div>
+      <div class="status" id="trStatus">Hold the phone in one hand for 20 seconds to measure any shaking.</div>
+      <div class="progress" id="trProgressWrap" hidden><i id="trProgress"></i></div>
+      <div class="notice" id="trNotice" hidden></div>
+      <div class="actions">
+        <button class="primary" id="trStart" type="button">Start tremor check</button>
+        <button class="quiet" id="trStop" type="button" hidden>Stop</button>
+        <button id="trSave" type="button" hidden>Save check</button>
+      </div>
+    </div>
+    <section class="two">
+      <div>
+        <h2>How to check</h2>
+        <ol class="steps">
+          <li>Sit down. Hold the phone loosely in one hand, screen up.</li>
+          <li><b>Resting on lap:</b> rest that forearm on your thigh. <b>Arm held out:</b> stretch the arm forward.</li>
+          <li>Tap Start and stay as still as you can for 20 seconds. Do not grip hard.</li>
+          <li>Check both hands, in both positions. Parkinson's tremor is usually strongest at rest; essential tremor when the arm is held out.</li>
+        </ol>
+      </div>
+      <div>
+        <h2>What the numbers mean</h2>
+        <p class="fine" style="margin:0">
+          <b>Shake speed</b> is how many times a second the hand shakes. 4–6 is typical of Parkinson's, 4–12 of essential tremor,
+          and 8–12 of the small normal tremor everyone has. <b>Strength</b> is the shaking acceleration, and <b>size</b> the
+          back-and-forth distance it works out to. <b>Steady rhythm</b> shows how much of the shaking is at one speed: a tremor is
+          rhythmic, a fidgeting hand is not.
+        </p>
+      </div>
+    </section>
+    <section>
+      <div class="histhead"><h2>Your tremor checks</h2><button class="quiet" id="trClear" type="button" hidden>Delete all</button></div>
+      <table id="trHistory" hidden>
+        <thead><tr><th>When</th><th>Hand</th><th>Speed</th><th>Strength</th><th>Result</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="fine" id="trNoHistory">No tremor checks yet. Saved checks stay in this browser only.</p>
+    </section>
+  </div>
+
+  <div class="stack" id="strokeUi" hidden>
+    <div class="verdict flat">
+      <strong>Think stroke? Call 108 now.</strong>
+      <p>Don't wait for this check. A face drooping on one side, a weak arm, or slurred speech that starts suddenly needs a
+      hospital within hours. Note the time the symptoms started.</p>
+      <div class="actions" style="margin-top:10px"><a class="filebtn callbtn" href="tel:108">Call 108</a></div>
+    </div>
+    <div class="verdict" id="stSummary" hidden><strong id="stSummaryHead"></strong><p id="stSummaryText"></p></div>
+
+    <div class="card">
+      <h3>F · Face <span class="chip" id="fChip">Not done</span></h3>
+      <p>Uses the selfie camera to compare how much each side of the mouth lifts in a smile.</p>
+      <div class="facecam" id="stCam" hidden><video id="stVideo" playsinline muted></video><canvas class="marks" id="stMarks"></canvas></div>
+      <div class="bigprompt" id="fPrompt" hidden></div>
+      <div class="mini" id="fStatus"></div>
+      <div class="verdict" id="fResult" hidden><strong id="fHead"></strong><p id="fText"></p></div>
+      <div class="actions"><button class="primary" id="fStart" type="button">Start face check</button><button class="quiet" id="fStop" type="button" hidden>Stop</button></div>
+    </div>
+
+    <div class="card">
+      <h3>A · Arms <span class="chip" id="aChip">Not done</span></h3>
+      <p>Sit up. Hold the phone flat on your palm, screen up, with the arm straight out in front. Close your eyes when told and
+      keep still for 10 seconds. The phone beeps and speaks when to open them. Then do the other arm.</p>
+      <div class="bigprompt" id="aPrompt" hidden></div>
+      <div class="mini" id="aStatus"></div>
+      <div class="result-line" id="aResults"></div>
+      <div class="verdict" id="aResult" hidden><strong id="aHead"></strong><p id="aText"></p></div>
+      <div class="actions"><button id="aLeft" type="button">Left arm</button><button id="aRight" type="button">Right arm</button></div>
+    </div>
+
+    <div class="card">
+      <h3>S · Speech <span class="chip" id="sChip">Not done</span></h3>
+      <p>Ask the person to say this sentence out loud. You judge it: the phone does not.</p>
+      <div class="say">“You can't teach an old dog new tricks.”</div>
+      <div class="actions">
+        <button id="sNormal" type="button">Clear and correct</button>
+        <button id="sSlurred" type="button">Slurred or wrong words</button>
+        <button id="sNone" type="button">Could not speak</button>
+        <button class="quiet" id="sReset" type="button" hidden>Change answer</button>
+      </div>
+    </div>
+
+    <section>
+      <h2>About this check</h2>
+      <p class="fine" style="margin:0">
+        Face, Arms, Speech, Time (FAST) is the stroke warning sign check used by ambulance services. Here the phone measures the
+        face (MediaPipe face landmarks, run on this phone) and the arms (motion sensor). The cut-offs are provisional and have not
+        been checked against patients. <b>A normal result does not rule out a stroke.</b> Nothing is uploaded or saved.
+      </p>
+    </section>
+  </div>
+
+  <div class="stack" id="sleepUi" hidden>
+    <div class="instrument" aria-live="polite">
+      <div class="verdict" id="slVerdict" hidden><strong id="slHead"></strong><p id="slText"></p>
+        <p class="fine">Counts breathing pauses of 10 seconds or more seen by sonar. This is not a sleep study: it cannot see shallow
+        breathing or oxygen levels, and its cut-offs have not been checked against one.</p></div>
+      <div class="strip tall"><canvas id="slTrace" aria-label="Breathing movement"></canvas><span class="scale">breathing · last 60 s</span></div>
+      <div class="readout">
+        <div class="bpm">
+          <div class="label">Breathing</div>
+          <div class="big"><span id="slRate">--</span><small>/ min</small></div>
+        </div>
+        <div class="minor">
+          <div><span class="label">Pauses</span><b id="slPauses">--</b></div>
+          <div><span class="label">Per hour</span><b id="slPerHour">--</b></div>
+          <div><span class="label">Tracked</span><b id="slTime">--</b></div>
+        </div>
+      </div>
+      <div class="meta" id="slMeta"><span>Not started</span></div>
+    </div>
+    <div class="panel">
+      <div class="bigprompt" id="slPrompt" hidden></div>
+      <div class="status" id="slStatus">Track breathing while you sleep, with sound too high for most adults to hear.</div>
+      <div class="notice" id="slNotice" hidden></div>
+      <div class="actions" id="slActions">
+        <button class="primary" id="slNight" type="button">Start sleep tracking</button>
+        <button id="slDemo" type="button">Try it awake (90 s)</button>
+      </div>
+      <div class="actions" id="slRunActions" hidden>
+        <button class="quiet" id="slStop" type="button">Stop</button>
+        <button class="quiet" id="slDimBtn" type="button">Dim screen</button>
+      </div>
+      <div class="actions" id="slResultActions" hidden>
+        <button class="primary" id="slSave" type="button">Save night</button>
+        <button id="slAgain" type="button">Start again</button>
+      </div>
+    </div>
+    <section class="two">
+      <div>
+        <h2>Set up for the night</h2>
+        <ol class="steps">
+          <li>Plug in the charger. The screen stays on; tap <b>Dim screen</b> to black it out.</li>
+          <li>Take the phone out of its case. Set the volume to about half and disconnect earphones.</li>
+          <li>Put the phone on the bed or a bedside table, within about half a metre of your chest, with the bottom edge (the speaker) pointing at you.</li>
+          <li>Sleep alone in the bed if you can: a partner's breathing mixes in.</li>
+        </ol>
+      </div>
+      <div>
+        <h2>How it works</h2>
+        <p class="fine" style="margin:0">
+          The phone plays steady tones at 18–20 kHz and listens to their echo. Each breath moves the chest a few millimetres, which
+          shifts the echo: that wobble is the breathing line above. A flat stretch of 10 seconds or more counts as a pause. Based on
+          ApneaApp (Nandakumar, Gollakota &amp; Watson, MobiSys 2015). Children and pets may hear a faint hiss; stop if it bothers anyone.
+          Sound is processed on this phone and never recorded or uploaded.
+        </p>
+      </div>
+    </section>
+    <section>
+      <div class="histhead"><h2>Your nights</h2><button class="quiet" id="slClear" type="button" hidden>Delete all</button></div>
+      <table id="slHistory" hidden>
+        <thead><tr><th>Night of</th><th>Tracked</th><th>Breathing</th><th>Pauses / h</th><th>Result</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="fine" id="slNoHistory">No nights saved yet. Saved nights stay in this browser only.</p>
+    </section>
+    <div class="dim" id="slDim" hidden>Tracking breathing · tap to wake</div>
+  </div>
+
   <section class="research" aria-labelledby="researchHead">
     <h2 id="researchHead">Research preview: not measured here</h2>
     <p class="fine" style="margin:0">
@@ -530,6 +736,10 @@
 
 <script src="ppg.js"></script>
 <script src="ear.js"></script>
+<script src="motion.js"></script>
+<script src="sonar.js"></script>
+<script src="stroke.js"></script>
+<script src="features.js"></script>
 <script>
 (() => {
   'use strict';
@@ -604,11 +814,11 @@
     els.hrv.innerHTML = r.rmssdMs == null ? '--<span>ms</span>' : `${Math.round(r.rmssdMs)}<span>ms</span>`;
     els.resp.innerHTML = r.respiratoryRate == null ? '--<span>/ min</span>' : `≈${Math.round(r.respiratoryRate)}<span>/ min</span>`;
     els.meta.innerHTML = '';
-    for (const text of [
+    for (const text of r.unevenBeats ? [`About ${Math.round(r.heartRate)} bpm on average from ${r.unevenBeats} uneven beats`] : [
       `Quality ${Math.round(r.quality * 100)}%`,
       `${Math.round(r.heartRate)} bpm from ${r.beats} beats · ${Math.round(r.spectralHeartRate)} bpm from the spectrum`,
     ]) { const s = document.createElement('span'); s.textContent = text; els.meta.append(s); }
-    drawTrace(wave, r.peakIndexes.filter((p) => p >= start).map((p) => p - start));
+    drawTrace(wave, (r.peakIndexes || []).filter((p) => p >= start).map((p) => p - start));
     els.bpm.closest('.instrument').classList.toggle('example', example);
     els.chip.textContent = example ? 'Example, not your reading' : 'Your reading';
     els.chip.className = example ? 'chip warn' : 'chip good';
@@ -633,16 +843,19 @@
   }
 
   // ------------------------------------------------------------------ ui
+  const TABS = { finger: 'tabFinger', face: 'tabFace', ear: 'tabEar', tremor: 'tabTremor', stroke: 'tabStroke', sleep: 'tabSleep' };
   function setMode(next) {
-    if (run || earRun || mode === next) return;
+    if (run || earRun || window.Features.busy() || mode === next) return;
     mode = next;
-    $('tabFinger').setAttribute('aria-selected', String(mode === 'finger'));
-    $('tabFace').setAttribute('aria-selected', String(mode === 'face'));
-    $('tabEar').setAttribute('aria-selected', String(mode === 'ear'));
-    $('pulseUi').hidden = mode === 'ear';
+    for (const m in TABS) $(TABS[m]).setAttribute('aria-selected', String(mode === m));
+    const pulse = mode === 'finger' || mode === 'face';
+    $('pulseUi').hidden = !pulse;
     $('earUi').hidden = mode !== 'ear';
-    els.chip.hidden = mode === 'ear';
+    els.chip.hidden = !pulse;
+    window.Features.show(mode);
     if (mode === 'ear') { drawEcho(); return; }
+    if (!pulse) return;
+    showRhythm(null);
     $('fingerSteps').hidden = mode !== 'finger';
     $('faceSteps').hidden = mode !== 'face';
     els.videoInput.setAttribute('capture', mode === 'face' ? 'user' : 'environment');
@@ -654,7 +867,45 @@
   }
 
   /** Blank the readout so a run never shows the previous numbers. */
+  const RHYTHM = {
+    regular: { cls: 'good', box: 'clear', short: 'Regular', head: 'Heart rhythm: regular',
+      text: 'The beats came at a steady pace. Small changes that follow your breathing are normal.' },
+    'early-beats': { cls: 'warn', box: 'unclear', short: 'Early beats', head: 'Regular, with a few early beats',
+      text: 'Mostly steady, with one or more beats that came early and a pause after. These are common and usually harmless, but mention them to a doctor if you often feel your heart skip or flutter.' },
+    unclear: { cls: 'warn', box: 'unclear', short: 'Unclear', head: 'Rhythm unclear: measure again',
+      text: 'The time between beats varied more than usual, but not clearly enough to call it irregular. Sit still for 5 minutes and measure again.' },
+    irregular: { cls: 'bad', box: 'flat', short: 'Irregular', head: 'Irregular rhythm: possible atrial fibrillation',
+      text: 'The time between beats kept changing at random, as happens in atrial fibrillation (AFib), a common cause of stroke. Please see a doctor for an ECG soon. Go to hospital now if you also have chest pain, fainting, breathlessness, or weakness on one side.' },
+  };
+
+  /** Rhythm box with a dot per beat: a level line is steady, scattered dots are irregular. */
+  function showRhythm(rr) {
+    const box = $('rhythmBox');
+    box.hidden = !rr;
+    if (!rr) return;
+    const plot = $('rhythmPlot'); plot.innerHTML = '';
+    if (rr.verdict !== 'ok') {
+      box.className = 'verdict';
+      $('rhythmHead').textContent = 'Heart rhythm: could not judge';
+      $('rhythmText').textContent = rr.problem;
+      $('rhythmPlotNote').textContent = '';
+      return;
+    }
+    const info = RHYTHM[rr.rhythm];
+    box.className = `verdict ${info.box}`;
+    $('rhythmHead').textContent = info.head;
+    $('rhythmText').textContent = info.text;
+    const iv = rr.intervals, mean = iv.reduce((a, b) => a + b, 0) / iv.length;
+    const lo = Math.min(mean * 0.6, ...iv), hi = Math.max(mean * 1.4, ...iv);
+    const NS = 'http://www.w3.org/2000/svg', el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); plot.append(e); };
+    const y = (ms) => 60 - (ms - lo) / (hi - lo) * 56;
+    el('line', { x1: 0, x2: 300, y1: y(mean), y2: y(mean) });
+    iv.forEach((ms, i) => el('circle', { cx: 6 + i * 288 / Math.max(1, iv.length - 1), cy: y(ms), r: 3.2 }));
+    $('rhythmPlotNote').textContent = `Time between beats, one dot per beat: ${Math.round(Math.min(...iv))}–${Math.round(Math.max(...iv))} ms. Steady beats sit on the line.`;
+  }
+
   function clearReadout() {
+    showRhythm(null);
     els.bpm.textContent = '--';
     els.hrv.innerHTML = '--<span>ms</span>';
     els.resp.innerHTML = '--<span>/ min</span>';
@@ -889,13 +1140,26 @@
     setTimeout(() => {
       const r = method === 'face-rppg-v1' ? Ppg.analyzeFace(samples) : Ppg.analyze(samples);
       r.method = method;
+      // Rhythm needs the cleaner fingertip signal; the face is too noisy for beat-to-beat timing.
+      const rr = method === 'camera-ppg-v1' ? Ppg.rhythm(samples) : null;
       showResult(r);
+      showRhythm(rr);
+      if (rr && rr.verdict === 'ok') r.rhythm = rr.rhythm;
+      if (r.verdict !== 'good' && rr && rr.verdict === 'ok' && rr.rhythm === 'irregular') {
+        // The heart-rate check rejects uneven beats as noise, but the rhythm
+        // check found clean pulses at uneven times: report that instead.
+        Object.assign(r, { verdict: 'good', heartRate: rr.heartRate, rmssdMs: null, respiratoryRate: null,
+          quality: rr.beatQuality, unevenBeats: rr.intervals.length + 1 });
+        showResult(r);
+      }
       if (r.verdict === 'good') {
         lastResult = r;
         setPhase('result');
         els.saveBtn.disabled = false;
         els.saveBtn.textContent = 'Save reading';
-        status(`Your heart rate is about ${Math.round(r.heartRate)} beats per minute.`);
+        status(r.rhythm === 'irregular'
+          ? `Your pulse is irregular, about ${Math.round(r.heartRate)} beats per minute on average.`
+          : `Your heart rate is about ${Math.round(r.heartRate)} beats per minute.`);
       } else {
         lastResult = null;
         setPhase('idle');
@@ -923,9 +1187,15 @@
       const tr = document.createElement('tr');
       const when = new Date(r.at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
       const how = r.method === 'face-rppg-v1' ? 'Face' : 'Finger';
-      for (const [text, num] of [[when, false], [how, false], [`${r.bpm} bpm`, true], [r.hrv == null ? '--' : `${r.hrv} ms`, true], [`${r.quality}%`, true]]) {
+      for (const [text, num] of [[when, false], [how, false], [`${r.bpm} bpm`, true], [r.hrv == null ? '--' : `${r.hrv} ms`, true]]) {
         const td = document.createElement('td'); td.textContent = text; if (num) td.className = 'num'; tr.append(td);
       }
+      const td = document.createElement('td');
+      if (r.rhythm && RHYTHM[r.rhythm]) {
+        const chip = document.createElement('span');
+        chip.className = `chip ${RHYTHM[r.rhythm].cls}`; chip.textContent = RHYTHM[r.rhythm].short; td.append(chip);
+      } else td.textContent = '--';
+      tr.append(td);
       body.append(tr);
     }
     table.hidden = !list.length;
@@ -1301,6 +1571,9 @@
   $('tabFinger').addEventListener('click', () => setMode('finger'));
   $('tabFace').addEventListener('click', () => setMode('face'));
   $('tabEar').addEventListener('click', () => setMode('ear'));
+  $('tabTremor').addEventListener('click', () => setMode('tremor'));
+  $('tabStroke').addEventListener('click', () => setMode('stroke'));
+  $('tabSleep').addEventListener('click', () => setMode('sleep'));
   $('videoInput').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
@@ -1319,6 +1592,7 @@
       at: new Date().toISOString(), bpm: Math.round(lastResult.heartRate),
       hrv: lastResult.rmssdMs == null ? null : Math.round(lastResult.rmssdMs),
       quality: Math.round(lastResult.quality * 100), method: lastResult.method,
+      rhythm: lastResult.rhythm || null,
     });
     if (saveHistory(list.slice(0, 50))) {
       els.saveBtn.disabled = true; els.saveBtn.textContent = 'Saved';
