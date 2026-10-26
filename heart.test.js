@@ -72,9 +72,53 @@ test('the filter keeps the heart band and removes voices', () => {
 
 test('audible version and WAV export', () => {
   const r = Heart.analyze(chest({ bpm: 70 }), SR);
-  const a = Heart.audible(r.envelope, 2);
-  assert.equal(a.length, 2 * 22050);
-  assert.ok(Math.max(...a) > 0.3);
-  const buf = Heart.wav(a, 22050);
-  assert.equal(buf.byteLength, 44 + a.length * 2);
+  const { samples, sampleRate } = Heart.audible(r.wide, r.rate);
+  assert.equal(sampleRate, 8000);
+  assert.ok(Math.abs(samples.length / sampleRate - r.wide.length / r.rate) < 0.01, 'same length as the recording');
+  // The 45 Hz lub comes out near 245 Hz.
+  const tone = (hz) => { let re = 0, im = 0; for (let i = 0; i < samples.length; i++) { re += samples[i] * Math.cos(2 * Math.PI * hz * i / sampleRate); im += samples[i] * Math.sin(2 * Math.PI * hz * i / sampleRate); } return Math.hypot(re, im); };
+  assert.ok(tone(245) > 20 * tone(45), `raised: ${tone(245)} vs ${tone(45)}`);
+  const buf = Heart.wav(samples, sampleRate);
+  assert.equal(buf.byteLength, 44 + samples.length * 2);
+});
+
+test('labels lub and dub in the right order', () => {
+  for (const bpm of [60, 75, 100]) {
+    const r = Heart.analyze(chest({ bpm, seed: bpm, jitter: 0 }), SR);   // steady beats, so the true lub times are known
+    const seg = r.seg, period = 60 / bpm, gap = Math.min(0.33, 0.4 * period);
+    assert.ok(seg.s1.length >= bpm / 3 - 4, `${seg.s1.length} lubs at ${bpm} bpm`);
+    // The chest() lub is centred at 0.35 s + k·period (envelope time starts 0.5 s in); filters delay it a little.
+    const phase = (t) => { const p = ((t + 0.5 - 0.35) % period + period) % period; return Math.min(p, period - p); };
+    const onLub = seg.s1.filter((t) => phase(t) < 0.1).length / seg.s1.length;
+    assert.ok(onLub > 0.9, `${bpm} bpm: only ${onLub} of lubs on S1`);
+    assert.ok(Math.abs(seg.systole - (gap - 0.01)) < 0.06, `${bpm} bpm: systole ${seg.systole}, expected ~${gap}`);
+  }
+});
+
+// Real recordings from the CirCor DigiScope dataset (PhysioNet, ODC-By 1.0).
+function readWav(file) {
+  const b = require('node:fs').readFileSync(require('node:path').join(__dirname, file));
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength), n = dv.getUint32(40, true) >> 1;
+  return { x: Float32Array.from({ length: n }, (_, i) => dv.getInt16(44 + 2 * i, true) / 32768), rate: dv.getUint32(24, true) };
+}
+
+test('murmur check on real recordings: normal heart and a loud murmur', () => {
+  const normal = readWav('sounds/circor-normal.wav'), murmur = readWav('sounds/circor-murmur.wav');
+  const a = Heart.analyze(normal.x, normal.rate), b = Heart.analyze(murmur.x, murmur.rate);
+  assert.equal(a.murmur.level, 'none', `normal scored ${a.murmur.p}`);
+  assert.equal(b.murmur.level, 'possible', `murmur scored ${b.murmur.p}`);
+  assert.ok(b.murmur.loudSystoleShare > 0.8);
+  const both = Heart.combineSpots([{ ...a, spot: 'PV' }, { ...b, spot: 'TV' }]);
+  assert.equal(both.level, 'possible'); assert.equal(both.spot, 'TV'); assert.equal(both.spots, 2);
+});
+
+test('a whoosh added between lub and dub raises the murmur score', () => {
+  const quiet = chest({ bpm: 80, seed: 3, noise: 0.004 }), loud = Float32Array.from(quiet);
+  const rand = rng(9), period = 0.75;
+  for (let t = 0.3; t < 20; t += period) {
+    for (let i = Math.round((t + 0.11) * SR); i < Math.round((t + 0.27) * SR) && i < loud.length; i++) loud[i] += 0.03 * (rand() - 0.5);
+  }
+  const a = Heart.analyze(quiet, SR), b = Heart.analyze(loud, SR);
+  assert.ok(a.murmur && b.murmur, 'both judged');
+  assert.ok(b.murmur.p > a.murmur.p + 0.3, `quiet ${a.murmur.p} vs whoosh ${b.murmur.p}`);
 });

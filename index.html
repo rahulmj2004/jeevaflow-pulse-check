@@ -177,6 +177,27 @@
   .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .sides button[aria-checked="true"] { background: var(--accent); color: var(--accent-ink); }
   a.filebtn { text-decoration: none; }
+  .spotpick { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 14px; align-items: center; }
+  @media (max-width: 520px) { .spotpick { grid-template-columns: 1fr; } #hsChest { max-width: 240px; margin: 0 auto; } }
+  #hsChest { width: 100%; height: auto; display: block; }
+  #hsChest .torso { fill: var(--paper); stroke: var(--line); stroke-width: 2; }
+  #hsChest .bone { fill: none; stroke: var(--muted); stroke-width: 2; opacity: .5; }
+  #hsChest rect.bone { fill: var(--line); }
+  #hsChest .rib { fill: none; stroke: var(--line); stroke-width: 1.5; }
+  #hsChest .nipple { fill: none; stroke: var(--muted); opacity: .5; }
+  #hsChest g circle { fill: var(--surface); stroke: var(--accent); stroke-width: 2.5; }
+  #hsChest g text, #hsChest .side { font: 600 10px system-ui, sans-serif; fill: var(--muted); }
+  #hsChest g.on circle { fill: var(--accent); }
+  #hsChest g.on text { fill: var(--accent); }
+  .spots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .spots button[aria-checked="true"] { background: var(--accent); color: var(--accent-ink); }
+  .spots button.done::after { content: " ✓"; }
+  .bars span.track i.warn { background: var(--warn); }
+  #hsMurmurBar { margin-top: 0; }
+  #hsMurmurBar span.track { display: block; }
+  .tally span.good { color: var(--good); } .tally span.warn { color: var(--warn); } .tally span.bad { color: var(--bad); font-weight: 700; }
+  .samplecard { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 10px; }
+  .samplecard .actions { margin-top: 6px; }
   .meter { display: grid; gap: 4px; }
   .meter .bar { position: relative; height: 14px; background: var(--line); border-radius: 99px; overflow: hidden; }
   .meter .bar i { position: absolute; inset: 0 auto 0 0; width: 0%; background: var(--accent); transition: width .08s linear; }
@@ -732,28 +753,55 @@
 
   <div class="stack" id="heartUi" hidden>
     <div class="verdict" style="border-color:var(--accent)">
-      <strong>Dhadkan · test version</strong>
-      <p>This checks whether your phone's microphone can hear your heart. It shows the heartbeat and measures your heart
-      rate from the sound. It does <b>not</b> check for murmurs or heart disease yet.</p>
+      <strong>Dhadkan · heart murmur check (test version)</strong>
+      <p>Press the phone on the chest and it listens for a <b>heart murmur</b>: a whooshing sound between the heartbeats
+      that can mean a heart valve problem, such as rheumatic heart disease, or a hole in the heart. The check was trained
+      on 942 children's heart recordings labelled by heart doctors. It has <b>not yet been tested with phone microphones</b>,
+      and it is a screen, not a diagnosis.</p>
     </div>
     <div class="instrument" aria-live="polite">
       <div class="verdict" id="hsVerdict" hidden><strong id="hsHead"></strong><p id="hsText"></p></div>
-      <div class="strip tall"><canvas id="hsTrace" aria-label="Heart sound wave"></canvas><span class="scale" id="hsScale">heart sounds · last 4 s</span></div>
+      <span class="chip warn" id="hsSampleTag" hidden></span>
+      <div class="strip tall"><canvas id="hsTrace" aria-label="Heart sound wave with lub and dub marked"></canvas><span class="scale" id="hsScale">heart sounds · last 4 s</span></div>
       <div class="readout">
         <div class="bpm">
           <div class="label">Heart rate from sound</div>
           <div class="big"><span id="hsBpm">--</span><small>bpm</small></div>
         </div>
         <div class="minor">
+          <div><span class="label">Murmur score</span><b id="hsMurmur">--</b></div>
+          <div class="bars" id="hsMurmurBar" hidden><span class="track"><i></i></span></div>
           <div><span class="label">Heartbeat clarity</span><b id="hsClarity">--</b></div>
-          <div><span class="label">Heart-band level</span><b id="hsBass">--<span>dB</span></b></div>
-          <div><span class="label">Beats heard</span><b id="hsBeats">--</b></div>
         </div>
       </div>
       <div class="meta" id="hsMeta"><span>Not recorded yet</span></div>
     </div>
     <div class="panel">
-      <div class="status" id="hsStatus">Press the phone on your chest and record 20 seconds of heartbeat.</div>
+      <div class="spotpick">
+        <svg id="hsChest" viewBox="0 0 200 190" role="img" aria-label="Chest with the four listening spots">
+          <path d="M40 30 Q100 8 160 30 L176 180 L24 180 Z" class="torso"/>
+          <path d="M52 34 Q76 44 96 40 M148 34 Q124 44 104 40" class="bone"/>
+          <rect x="94" y="40" width="12" height="100" rx="5" class="bone"/>
+          <path d="M60 70 Q80 76 94 70 M106 70 Q120 76 140 70 M56 100 Q78 106 94 100 M106 100 Q124 106 146 100 M58 128 Q80 134 94 128 M106 128 Q126 136 150 128" class="rib"/>
+          <circle cx="132" cy="134" r="5" class="nipple"/><circle cx="68" cy="134" r="5" class="nipple"/>
+          <g data-spot="AV"><circle cx="84" cy="58" r="9"/><text x="70" y="62" text-anchor="end">Aortic</text></g>
+          <g data-spot="PV"><circle cx="116" cy="58" r="9"/><text x="130" y="62">Pulmonary</text></g>
+          <g data-spot="TV"><circle cx="112" cy="118" r="9"/><text x="78" y="122" text-anchor="end">Tricuspid</text></g>
+          <g data-spot="MV"><circle cx="134" cy="150" r="9"/><text x="148" y="166">Mitral</text></g>
+          <text x="8" y="186" class="side">their right</text><text x="192" y="186" text-anchor="end" class="side">their left</text>
+        </svg>
+        <div>
+          <div class="spots" id="hsSpots" role="radiogroup" aria-label="Chest spot">
+            <button type="button" role="radio" data-spot="AV" aria-checked="false">Aortic</button>
+            <button type="button" role="radio" data-spot="PV" aria-checked="true">Pulmonary</button>
+            <button type="button" role="radio" data-spot="TV" aria-checked="false">Tricuspid</button>
+            <button type="button" role="radio" data-spot="MV" aria-checked="false">Mitral</button>
+          </div>
+          <p class="fine" id="hsSpotWhere"></p>
+          <p class="fine" style="margin:0">These are the four spots a doctor listens at. Murmurs are often loudest at only one of them, so checking all four catches more.</p>
+        </div>
+      </div>
+      <div class="status" id="hsStatus">Pick a spot, press the phone on it, and record 20 seconds of heartbeat.</div>
       <div class="progress" id="hsProgressWrap" hidden><i id="hsProgress"></i></div>
       <div class="notice" id="hsNotice" hidden></div>
       <div class="actions" id="hsActions">
@@ -765,28 +813,59 @@
       <div class="actions" id="hsResultActions" hidden>
         <button class="primary" id="hsPlayBoost" type="button">Play heartbeat (speaker)</button>
         <button id="hsPlayReal" type="button">Play real sound (earphones)</button>
+        <button id="hsNext" type="button">Next spot</button>
         <a class="filebtn" id="hsDownload" download="dhadkan-heart-sound.wav" href="#">Download recording</a>
         <button class="quiet" id="hsAgain" type="button">Record again</button>
       </div>
+      <div class="verdict overall" id="hsOverall" hidden><strong id="hsOverallHead"></strong><p id="hsOverallText"></p></div>
+      <ul class="tally" id="hsSpotList"></ul>
+      <div class="actions"><button class="quiet" id="hsReset" type="button">Clear spot results</button></div>
     </div>
     <section class="two">
+      <div>
+        <h2>Hear the difference</h2>
+        <p class="fine" style="margin:0 0 10px">Two real recordings from children in the CirCor heart sound dataset, made with a digital stethoscope. Play them, or run the same check on them.</p>
+        <div class="samplecard">
+          <b>Normal heart</b><span class="fine">clear lub-dub, quiet in between</span>
+          <div class="actions"><button id="hsPlayNormal" type="button">Play</button><button class="quiet" id="hsCheckNormal" type="button">Check this sample</button></div>
+        </div>
+        <div class="samplecard">
+          <b>Heart with a murmur</b><span class="fine">loud (grade III of VI) whoosh between lub and dub</span>
+          <div class="actions"><button id="hsPlayMurmur" type="button">Play</button><button class="quiet" id="hsCheckMurmur" type="button">Check this sample</button></div>
+        </div>
+      </div>
       <div>
         <h2>How to record</h2>
         <ol class="steps">
           <li>Go to a quiet room. Turn off fans and the TV. Take the phone out of its case.</li>
           <li>Find the microphone: the small hole on the bottom edge of the phone.</li>
-          <li>Lift your shirt. Press that bottom edge <b>firmly on bare skin</b>, just left of the breastbone, between the ribs (below the left nipple works well).</li>
-          <li>Tap Start, then <b>stay completely silent and still</b>. Breathe gently; holding your breath for a few seconds makes it clearer.</li>
+          <li>Lift the shirt. Press that bottom edge <b>firmly on bare skin</b> at the chosen spot.</li>
+          <li>Tap Start, then <b>stay completely silent and still</b>. The page tells you when it hears the heartbeat.</li>
         </ol>
       </div>
+    </section>
+    <section class="two">
       <div>
         <h2>How it works</h2>
         <p class="fine" style="margin:0">
-          Each heartbeat closes the heart's valves twice, making two low thuds, "lub" and "dub". They make the chest wall
-          vibrate, and a microphone pressed on the skin records that vibration. The page keeps only the low sounds where the
-          heart is (25–150 Hz), draws them, and finds the rhythm. Phone speakers cannot play such deep sounds, so
-          <b>Play heartbeat (speaker)</b> plays a higher tone that follows your recording's beats; use earphones for the real
-          sound. The recording stays on this phone unless you download it.
+          Each heartbeat closes the heart's valves twice: "lub" (S1) and "dub" (S2). Pressed on the skin, the microphone
+          records these. The page finds the heart rate, then labels every lub and dub using the heart's timing (lub to dub is
+          always the shorter gap). A healthy heart is quiet between them. With a murmur, blood rushing through a narrow or
+          leaky valve fills that gap with a whoosh. The page measures how loud each gap is, in four pitch bands, compared
+          with the lub and dub and with the pause after the dub, and a model turns that into a murmur score.
+          <b>Play heartbeat (speaker)</b> plays your own recording raised in pitch, because phone speakers cannot play
+          such deep sounds. The recording stays on this phone unless you download it.
+        </p>
+      </div>
+      <div>
+        <h2>How accurate is it?</h2>
+        <p class="fine" style="margin:0">
+          Tested on 2,370 recordings from children it had never seen (5-fold test, split by child), against cardiologists' labels:
+          it caught <b>73% of murmurs</b> (<b>93% of loud ones</b>, 57% of the softest) and correctly cleared <b>95% of normal
+          recordings</b>. Using all four spots, it caught 78% of children with a murmur and cleared 87% without. It finds the
+          lub-dub timing correctly about 8 times in 10. These recordings came from a digital stethoscope; a phone microphone
+          sounds different, so phone accuracy is not known yet. About 1 in 5 recordings was too unclear to judge.
+          Data: Oliveira et al., <a href="https://physionet.org/content/circor-heart-sound/1.0.3/">The CirCor DigiScope Phonocardiogram Dataset</a>, PhysioNet (ODC-By 1.0).
         </p>
       </div>
     </section>

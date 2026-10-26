@@ -8,8 +8,9 @@
  * loudness (autocorrelation of the envelope), and reports the heart rate
  * and how clearly a heartbeat was heard.
  *
- * It does not look for murmurs: that needs a model trained and tested on
- * doctor-labelled recordings.
+ * It then labels each lub and dub, measures the sound between them
+ * (where a murmur's whoosh would be), and scores how murmur-like the
+ * recording is with a model fitted on doctor-labelled recordings.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -38,9 +39,12 @@
    * two high-pass and four low-pass sections give a 25–150 Hz band that
    * cuts voices above it steeply.
    */
-  function createFilter(sampleRate) {
+  function createFilter(sampleRate, { wide = false } = {}) {
     const block = Math.max(1, Math.round(sampleRate / RATE)), rate = sampleRate / block;
-    const chain = [biquad('high', BAND[0], rate), biquad('high', BAND[0], rate),
+    // Anti-alias before averaging blocks, so hiss and voices above ~1 kHz
+    // cannot fold down into the heart and murmur bands.
+    const pre = block > 1 ? [biquad('low', 800, sampleRate), biquad('low', 800, sampleRate)] : [];
+    const chain = wide ? [] : [biquad('high', BAND[0], rate), biquad('high', BAND[0], rate),
       biquad('low', BAND[1], rate), biquad('low', BAND[1], rate), biquad('low', BAND[1], rate), biquad('low', BAND[1], rate)];
     let acc = 0, n = 0;
     return {
@@ -48,7 +52,9 @@
       push(x) {
         const out = [];
         for (let i = 0; i < x.length; i++) {
-          acc += x[i];
+          let u = x[i];
+          for (const f of pre) u = step(f, u);
+          acc += u;
           if (++n === block) {
             let v = acc / block;
             for (const f of chain) v = step(f, v);
@@ -62,8 +68,8 @@
   }
 
   /** Whole recording through the filter: {y, rate}. */
-  function filterAll(x, sampleRate) {
-    const f = createFilter(sampleRate);
+  function filterAll(x, sampleRate, opts) {
+    const f = createFilter(sampleRate, opts);
     return { y: Float64Array.from(f.push(x)), rate: f.rate };
   }
 
@@ -92,6 +98,140 @@
       out.push(i);
     }
     return out;
+  }
+
+  /** Usual time from lub to dub for a beat interval rr (s), from the CirCor recordings. */
+  const systoleFor = (rr) => Math.min(0.42, 0.11 + 0.22 * rr);
+
+  /**
+   * Labels each "lub" (S1) and "dub" (S2) in a loudness envelope at
+   * ENV_RATE, given the beat period in seconds. The lub-to-dub gap
+   * (systole) is shorter than the dub-to-next-lub gap (diastole), and both
+   * stay nearly constant through a recording, so the best chain of lubs is
+   * found by dynamic programming: each lub scores the loudness at it and at
+   * its dub, and consecutive lubs must sit about one period apart.
+   */
+  function segment(env, period) {
+    const n = env.length, T = period * ENV_RATE;
+    const scale = median(env) || 1e-12;
+    const e = Float64Array.from(env, (v) => Math.log1p(v / scale));
+    const lo = Math.round(0.75 * T), hi = Math.round(1.3 * T);
+    const expected = systoleFor(period) * ENV_RATE;
+    let best = null;
+    for (let f = 0.75; f <= 1.3001; f += 0.05) {
+      const ts = Math.round(expected * f);
+      if (ts < 10 || ts > 0.55 * T) continue;
+      const score = new Float64Array(n).fill(-Infinity), from = new Int32Array(n).fill(-1);
+      for (let t = 0; t + ts < n; t++) {
+        const own = e[t] + e[t + ts];
+        if (t < hi) score[t] = own;
+        for (let d = lo; d <= hi && d <= t; d++) {
+          const prev = score[t - d];
+          if (prev === -Infinity) continue;
+          const v = prev + own - 2 * ((d - T) / T) ** 2;
+          if (v > score[t]) { score[t] = v; from[t] = t - d; }
+        }
+      }
+      let end = -1;
+      for (let t = Math.max(0, n - ts - hi); t + ts < n; t++) if (end < 0 || score[t] > score[end]) end = t;
+      if (end < 0) continue;
+      const chain = [];
+      for (let t = end; t >= 0; t = from[t]) chain.unshift(t);
+      const mean = score[end] / chain.length - 5 * (f - 1) ** 2;   // prefer the usual systole
+      if (!best || mean > best.mean) best = { mean, chain, ts };
+    }
+    if (!best) return null;
+    // Let each dub settle on its own loudest point.
+    const near = Math.round(0.04 * ENV_RATE);
+    const s2 = best.chain.map((t) => {
+      let at = t + best.ts;
+      for (let k = t + best.ts - near; k <= t + best.ts + near; k++) if (k > t + 8 && k < n && env[k] > env[at]) at = k;
+      return at;
+    });
+    return { s1: best.chain.map((t) => t / ENV_RATE), s2: s2.map((t) => t / ENV_RATE), systole: best.ts / ENV_RATE, fit: best.mean };
+  }
+
+  // Murmurs are a whoosh of blood between the lub and dub (or after the
+  // dub), mostly above the thuds' pitch. Loudness is compared in these bands.
+  const MURMUR_BANDS = [[25, 100], [100, 200], [200, 400], [400, 800]];
+  const FEATURES = [
+    ...MURMUR_BANDS.map(([a, b]) => `sys/dia ${a}-${b}`),
+    ...MURMUR_BANDS.map(([a, b]) => `sys/S1 ${a}-${b}`),
+    ...MURMUR_BANDS.map(([a, b]) => `dia/S1 ${a}-${b}`),
+    'beats with loud systole 100-200', 'beats with loud systole 200-400', 'beats with loud diastole 100-200',
+    'S2/S1', 'systole pitch', 'diastole pitch', 'clarity', 'fit'];
+
+  /**
+   * w: wide-band sound at rate, aligned with seg's times. For each beat,
+   * the power in each band during S1, S2, systole and diastole (keeping
+   * clear of the thuds themselves); then ratios, as log10, taken as the
+   * median over beats so a single knock does not count.
+   */
+  function murmurFeatures(w, rate, seg, clarity) {
+    const bands = MURMUR_BANDS.map(([a, b]) => {
+      const chain = [biquad('high', a, rate), biquad('high', a, rate), biquad('low', b, rate), biquad('low', b, rate)];
+      return Float64Array.from(w, (v) => { for (const f of chain) v = step(f, v); return v; });
+    });
+    const pow = (y, s, e) => { const a = Math.max(0, Math.round(s * rate)), b = Math.min(y.length, Math.round(e * rate)); if (b - a < 4) return NaN; let t = 0; for (let i = a; i < b; i++) t += y[i] * y[i]; return t / (b - a) + 1e-14; };
+    const per = [];
+    for (let i = 0; i + 1 < seg.s1.length; i++) {
+      const s1 = seg.s1[i], s2 = seg.s2[i], next = seg.s1[i + 1];
+      if (s2 - s1 < 0.15 || next - s2 < 0.18 || s1 < 0.05) continue;
+      per.push(bands.map((y) => ({
+        S1: pow(y, s1 - 0.04, s1 + 0.05), S2: pow(y, s2 - 0.04, s2 + 0.04),
+        sys: pow(y, s1 + 0.07, s2 - 0.05), dia: pow(y, s2 + 0.07, next - 0.07),
+      })));
+    }
+    if (per.length < 4) return null;
+    const lg = Math.log10, med = (f) => median(per.map(f).filter(Number.isFinite));
+    const share = (f) => per.filter(f).length / per.length;
+    const v = [
+      ...[0, 1, 2, 3].map((b) => med((c) => lg(c[b].sys / c[b].dia))),
+      ...[0, 1, 2, 3].map((b) => med((c) => lg(c[b].sys / c[b].S1))),
+      ...[0, 1, 2, 3].map((b) => med((c) => lg(c[b].dia / c[b].S1))),
+      share((c) => c[1].sys > 2 * c[1].dia), share((c) => c[2].sys > 2 * c[2].dia), share((c) => c[1].dia > 2 * c[1].sys),
+      med((c) => lg(c[0].S2 / c[0].S1)), med((c) => lg(c[3].sys / c[1].sys)), med((c) => lg(c[3].dia / c[1].dia)),
+      clarity, seg.fit,
+    ];
+    return { values: v, beats: per.length };
+  }
+
+  /**
+   * Logistic regression over FEATURES, fitted on the CirCor DigiScope
+   * recordings (PhysioNet 2022; 942 children and teenagers in Brazil, digital
+   * stethoscope at four chest spots, murmurs labelled by cardiologists).
+   * Tested on patients it never saw (5-fold, split by patient): one
+   * recording AUC 0.885; at MURMUR_POSSIBLE it caught 73% of murmurs
+   * (93% of loud grade III/VI ones) and cleared 95% of normal recordings.
+   * Not yet tested on phone microphones.
+   */
+  const MURMUR_MODEL = {
+    mu: [0.09903, 0.196, 0.1735, 0.1204, -1.392, -0.9978, -0.5307, -0.2546, -1.485, -1.186, -0.7127, -0.3831, 0.3839, 0.3787, 0.2475, -0.06564, -0.2277, -0.15, 0.5494, 2.877],
+    sd: [0.2919, 0.4602, 0.484, 0.4358, 0.4891, 0.6004, 0.5129, 0.3997, 0.4656, 0.5552, 0.5158, 0.449, 0.203, 0.1875, 0.1209, 0.4163, 0.4756, 0.4552, 0.1441, 0.2697],
+    w: [0.0237, 0.3141, 0.09432, -0.0795, 0.2046, 0.1221, -0.104, -0.1006, 0.1515, 0.01585, 0.1286, 0.01706, 1.195, 0.7048, 0.5292, -0.03738, -0.3842, -0.02225, 0.3299, -0.09311],
+    b: -1.03,
+  };
+  const MURMUR_POSSIBLE = 0.5, MURMUR_UNCLEAR = 0.3;
+
+  /** Chance of a murmur in one recording, from analyze()'s features. */
+  function murmur(features) {
+    if (!features) return null;
+    const m = MURMUR_MODEL;
+    let t = m.b;
+    features.values.forEach((v, j) => { t += m.w[j] * (v - m.mu[j]) / m.sd[j]; });
+    const p = 1 / (1 + Math.exp(-t));
+    const level = p >= MURMUR_POSSIBLE ? 'possible' : p >= MURMUR_UNCLEAR ? 'unclear' : 'none';
+    const at = (name) => features.values[FEATURES.indexOf(name)];
+    const loud = Math.max(at('beats with loud systole 100-200'), at('beats with loud systole 200-400'));
+    return { p, level, loudSystoleShare: loud, loudDiastoleShare: at('beats with loud diastole 100-200'), beats: features.beats };
+  }
+
+  /** Several chest spots: the spot that sounds most like a murmur decides. */
+  function combineSpots(results) {
+    const judged = results.filter((r) => r && r.murmur);
+    if (!judged.length) return null;
+    const worst = judged.reduce((a, b) => (b.murmur.p > a.murmur.p ? b : a));
+    return { ...worst.murmur, spot: worst.spot, spots: judged.length };
   }
 
   /**
@@ -142,24 +282,66 @@
     const den = l - 2 * c + r, shift = den ? Math.max(-0.5, Math.min(0.5, 0.5 * (l - r) / den)) : 0;
     const period = (best[0] + shift) / ENV_RATE;
     const beats = peaks(env, Math.round(0.6 * period * ENV_RATE), median(env)).map((i) => i / ENV_RATE);
-    return { verdict: 'ok', heartRate: 60 / period, beats, ...base };
+    const seg = segment(env, period);
+    const wide = seg ? filterAll(x, sampleRate, { wide: true }).y.subarray(skip) : null;
+    const features = seg ? murmurFeatures(wide, rate, seg, clarity) : null;
+    return { verdict: 'ok', heartRate: 60 / period, beats, seg, wide, features, murmur: murmur(features), ...base };
+  }
+
+  /** In-place radix-2 FFT of (re, im); n must be a power of two. */
+  function fft(re, im, inverse = false) {
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = (inverse ? 2 : -2) * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let k = 0; k < len / 2; k++) {
+          const a = i + k, b = a + len / 2;
+          const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+          re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+          [cr, ci] = [cr * wr - ci * wi, cr * wi + ci * wr];
+        }
+      }
+    }
+    if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
   }
 
   /**
-   * The heart sound made audible on a phone speaker, which cannot play
-   * below ~200 Hz: a 220 Hz tone shaped by the recording's own loudness
-   * envelope, so each lub and dub is heard where it really happened.
+   * The real heart sound made audible on a phone speaker, which cannot
+   * play below ~200 Hz. Every frequency in the recording is moved up by
+   * `shift` Hz (a single-sideband shift), so the lub, the dub and any
+   * whoosh between them keep their exact timing and order of pitch; they
+   * are the person's own sounds, just higher.
+   * w: wide-band sound at rate. Returns {samples, sampleRate}.
    */
-  function audible(env, seconds, sampleRate = 22050) {
-    const out = new Float32Array(Math.round(seconds * sampleRate));
-    const max = Math.max(...env) || 1;
-    for (let i = 0; i < out.length; i++) {
-      const p = i / sampleRate * ENV_RATE, k = Math.floor(p), f = p - k;
-      const a = ((env[k] || 0) * (1 - f) + (env[k + 1] || 0) * f) / max;
-      const t = i / sampleRate;
-      out[i] = Math.pow(a, 1.5) * (0.7 * Math.sin(2 * Math.PI * 220 * t) + 0.3 * Math.sin(2 * Math.PI * 330 * t));
+  function audible(w, rate, shift = 200) {
+    const sr = 8000, len = Math.round(w.length / rate * sr);
+    let n = 1; while (n < len) n <<= 1;
+    // Upsample by linear interpolation; the band limit below removes the images.
+    const re = new Float64Array(n), im = new Float64Array(n), up = rate / sr;
+    for (let i = 0; i < len; i++) { const p = i * up, k = Math.floor(p), f = p - k; re[i] = (w[k] || 0) * (1 - f) + (w[k + 1] || 0) * f; }
+    fft(re, im);
+    const hz = (k) => k * sr / n, by = Math.round(shift / sr * n);
+    const yr = new Float64Array(n), yi = new Float64Array(n);
+    for (let k = 1; k < n / 2 - by; k++) {
+      if (hz(k) < 20 || hz(k) > 900) continue;          // heart and murmur sounds only
+      yr[k + by] = 2 * re[k]; yi[k + by] = 2 * im[k];
     }
-    return out;
+    fft(yr, yi, true);
+    // Soften knocks: compress peaks above 4× the typical loudness.
+    let e = 0; for (let i = 0; i < len; i++) e += yr[i] * yr[i];
+    const lim = 4 * Math.sqrt(e / len) || 1;
+    const samples = new Float32Array(len);
+    let peak = 0;
+    for (let i = 0; i < len; i++) { samples[i] = lim * Math.tanh(yr[i] / lim); peak = Math.max(peak, Math.abs(samples[i])); }
+    if (peak) for (let i = 0; i < len; i++) samples[i] *= 0.9 / peak;
+    return { samples, sampleRate: sr };
   }
 
   /** 16-bit mono WAV of samples in -1..1. */
@@ -174,5 +356,5 @@
     return data.buffer;
   }
 
-  return { RATE, BAND, ENV_RATE, MIN_CLARITY, createFilter, filterAll, envelope, analyze, audible, wav };
+  return { RATE, BAND, ENV_RATE, MIN_CLARITY, MURMUR_BANDS, FEATURES, MURMUR_POSSIBLE, MURMUR_UNCLEAR, systoleFor, segment, murmurFeatures, murmur, combineSpots, createFilter, filterAll, envelope, analyze, audible, wav };
 });

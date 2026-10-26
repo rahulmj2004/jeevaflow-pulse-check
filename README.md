@@ -44,11 +44,20 @@ recording's length and longest pause show slow or halting speech. Each step show
 2015) to show breathing rate and count pauses of 10 seconds or more, per hour of tracking. Not a sleep study. "Try it
 awake" runs a 90-second demo: breathe, hold your breath for 15 seconds, and watch it find the pause.
 
-**Heart sounds (Dhadkan, test version).** Press the phone's bottom edge (microphone) on bare skin left of the breastbone
-and record 20 seconds. `heart.js` keeps the 25–150 Hz band where the "lub" and "dub" are, finds the rhythm of its
-loudness, and shows the heart rate and how clearly a heartbeat was heard; it checks whether a phone can record heart
-sounds at all. It does not detect murmurs. The recording can be played back (a speaker-friendly version follows the
-recorded beats) or downloaded.
+**Heart sounds (Dhadkan): heart murmur check, test version.** Press the phone's bottom edge (microphone) on bare skin
+at one of the four spots a doctor listens at (aortic, pulmonary, tricuspid, mitral) and record 20 seconds. `heart.js`
+finds the heart rate, labels every "lub" (S1) and "dub" (S2) by dynamic programming on the loudness envelope (lub to
+dub is the shorter, steady gap), then measures the sound in the gaps in four pitch bands against the lub, dub and
+diastole. A logistic-regression model turns that into a murmur score: no murmur / unclear / possible murmur. The
+results from several spots are combined (the most murmur-like spot decides).
+
+The model was fitted on the [CirCor DigiScope dataset](https://physionet.org/content/circor-heart-sound/1.0.3/)
+(PhysioNet 2022, ODC-By 1.0; 942 children, digital stethoscope, cardiologist labels). On patients it never saw
+(5-fold, split by patient): one recording AUC 0.885, 73% of murmurs caught (93% of grade III/VI) and 95% of normal
+recordings cleared at the 50% cut-off; per child with all spots, 78% sensitivity and 87% specificity. Lub/dub timing
+F1 is about 0.82 against the dataset's annotations. **It has not been tested with phone microphones**, so phone
+accuracy is unknown. Playback raises the person's real recording by 200 Hz (single-sideband shift) so phone speakers
+can play it; two real CirCor recordings (normal, grade III/VI murmur) are included as samples in `sounds/`.
 
 All new cut-offs are provisional, and nothing is uploaded: sound, video and motion are processed on the phone.
 

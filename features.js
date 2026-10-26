@@ -1,6 +1,6 @@
 /**
- * Page logic for the Tremor, Stroke check and Sleep tabs. The measuring
- * itself lives in motion.js, stroke.js and sonar.js; this file only runs
+ * Page logic for the Tremor, Stroke check, Sleep and Heart sounds tabs. The
+ * measuring itself lives in motion.js, stroke.js, sonar.js and heart.js; this file only runs
  * the sensors and shows the results.
  */
 (function () {
@@ -708,11 +708,28 @@
   // =====================================================================
   // Heart sounds (Dhadkan)
   // =====================================================================
-  const hs = { run: null, last: null, url: null };
+  const SPOTS = {
+    AV: { name: 'Aortic', where: 'right of the breastbone, 2nd gap between ribs' },
+    PV: { name: 'Pulmonary', where: 'left of the breastbone, 2nd gap between ribs' },
+    TV: { name: 'Tricuspid', where: 'left of the lower breastbone, 4th gap' },
+    MV: { name: 'Mitral', where: 'below the left nipple, 5th gap' },
+  };
+  const SAMPLES = {
+    normal: { file: 'sounds/circor-normal.wav', name: 'Normal heart (sample)' },
+    murmur: { file: 'sounds/circor-murmur.wav', name: 'Heart with a murmur (sample)' },
+  };
+  const hs = { run: null, last: null, url: null, spot: 'PV', spots: {}, samples: {} };
+
+  function hsSpot(code) {
+    hs.spot = code;
+    document.querySelectorAll('#hsSpots button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.spot === code)));
+    document.querySelectorAll('#hsChest [data-spot]').forEach((c) => c.classList.toggle('on', c.dataset.spot === code));
+    $('hsSpotWhere').textContent = `${SPOTS[code].name} spot: ${SPOTS[code].where}.`;
+  }
 
   async function hsStart() {
     setNotice($('hsNotice'), '');
-    $('hsVerdict').hidden = true;
+    $('hsVerdict').hidden = true; $('hsSampleTag').hidden = true;
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx || !navigator.mediaDevices) { setNotice($('hsNotice'), 'This browser cannot record sound here. Use Chrome or Safari.'); return; }
     let stream;
@@ -738,26 +755,29 @@
     let cancelled = false;
     hs.run = { cancel() { cancelled = true; } };
     $('hsActions').hidden = true; $('hsRunActions').hidden = false; $('hsResultActions').hidden = true; $('hsProgressWrap').hidden = false;
-    $('hsBpm').textContent = '--'; $('hsClarity').textContent = '--'; $('hsBeats').textContent = '--';
+    $('hsBpm').textContent = '--'; $('hsClarity').textContent = '--'; $('hsMurmur').textContent = '--';
+    $('hsScale').textContent = 'heart sounds · live';
     keepAwake(true);
     const draw = () => { if (hs.run) { plot($('hsTrace'), show); requestAnimationFrame(draw); } };
     requestAnimationFrame(draw);
 
     const t0 = performance.now(), total = 20000;
-    let lastLive = 0;
+    let lastLive = 0, heard = false;
     while (!cancelled && performance.now() - t0 < total) {
       await wait(250);
-      const ms = performance.now() - t0;
+      const ms = performance.now() - t0, left = Math.ceil((total - ms) / 1000);
       $('hsProgress').style.width = `${ms / total * 100}%`;
-      const level = show.length ? 20 * Math.log10(Math.sqrt(show.reduce((a, v) => a + v * v, 0) / show.length) + 1e-9) : -120;
-      $('hsBass').innerHTML = `${Math.round(level)}<span>dB</span>`;
-      $('hsStatus').textContent = `Recording… stay silent and still, ${Math.ceil((total - ms) / 1000)} s`;
-      // A live reading every 2 s once there is enough sound.
-      if (ms > 9000 && ms - lastLive > 2000) {
+      if (ms < 8000) $('hsStatus').textContent = `Recording at the ${SPOTS[hs.spot].name} spot… stay silent and still, ${left} s`;
+      // Every 2 s, check the last 8 s so the person knows whether the phone is placed well.
+      if (ms > 8000 && ms - lastLive > 2000) {
         lastLive = ms;
-        const all = joined(chunks), r = Heart.analyze(all.subarray(Math.max(0, all.length - 10 * rate)), rate);
-        $('hsBpm').textContent = r.verdict === 'ok' ? Math.round(r.heartRate) : '--';
+        const all = joined(chunks), r = Heart.analyze(all.subarray(Math.max(0, all.length - 8 * rate)), rate);
+        heard = r.verdict === 'ok';
+        $('hsBpm').textContent = heard ? Math.round(r.heartRate) : '--';
         $('hsClarity').textContent = `${Math.round((r.clarity || 0) * 100)}%`;
+        $('hsStatus').textContent = heard
+          ? `Heartbeat heard. Keep still, ${left} s`
+          : `No clear heartbeat yet: press the phone's bottom edge firmer on bare skin, ${left} s`;
       }
     }
     proc.disconnect(); src.disconnect(); stream.getTracks().forEach((t) => t.stop()); ctx.close();
@@ -767,14 +787,20 @@
 
     const all = joined(chunks);
     const r = Heart.analyze(all, rate);
-    hs.last = { r, raw: all, rate };
+    r.spot = hs.spot;
+    hs.last = { r, raw: all, rate, sample: null };
+    if (r.verdict === 'ok') hs.spots[hs.spot] = r;
     hsShow(r);
+    hsSpotsRender();
     if (hs.url) URL.revokeObjectURL(hs.url);
     hs.url = URL.createObjectURL(new Blob([Heart.wav(all, rate)], { type: 'audio/wav' }));
-    $('hsDownload').href = hs.url;
+    $('hsDownload').href = hs.url; $('hsDownload').hidden = false;
     $('hsResultActions').hidden = false;
-    $('hsPlayBoost').disabled = r.verdict !== 'ok' && !r.envelope;
+    $('hsNext').hidden = !nextSpot();
+    $('hsPlayBoost').disabled = $('hsPlayReal').disabled = !r.wide;
   }
+
+  const nextSpot = () => Object.keys(SPOTS).find((k) => !hs.spots[k]);
 
   function joined(chunks) {
     const out = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
@@ -782,67 +808,196 @@
     return out;
   }
 
-  function hsShow(r) {
+  /** The last 3 s of the sound with each lub (S1) and dub (S2) labelled and the gaps between them shaded. */
+  function hsDraw(r) {
+    const canvas = $('hsTrace'), dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    const g = canvas.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+    const y = r.wide || r.filtered, rate = r.rate, span = 3;
+    const t0 = Math.max(0, y.length / rate - span), seg = r.seg;
+    const X = (t) => (t - t0) / span * w;
+    const murmurish = r.murmur && r.murmur.level !== 'none';
+    if (seg) {
+      for (let i = 0; i < seg.s1.length; i++) {
+        if (seg.s2[i] < t0) continue;
+        // Systole: between lub and dub, where most murmurs are.
+        g.fillStyle = css(murmurish ? '--bad-soft' : '--good-soft');
+        g.fillRect(X(seg.s1[i] + 0.05), 0, Math.max(1, X(seg.s2[i] - 0.04) - X(seg.s1[i] + 0.05)), h);
+      }
+    }
+    g.strokeStyle = css('--line'); g.lineWidth = 1; g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+    const a = Math.round(t0 * rate);
+    let peak = 1e-12; for (let i = a; i < y.length; i++) peak = Math.max(peak, Math.abs(y[i]));
+    g.strokeStyle = css('--trace'); g.lineWidth = 1.5; g.beginPath();
+    // One min/max pair per pixel column keeps short thuds visible.
+    for (let px = 0; px < w; px++) {
+      const i0 = a + Math.floor(px / w * (y.length - a)), i1 = a + Math.floor((px + 1) / w * (y.length - a));
+      let lo = 0, hi = 0; for (let i = i0; i < Math.max(i1, i0 + 1) && i < y.length; i++) { lo = Math.min(lo, y[i]); hi = Math.max(hi, y[i]); }
+      g.moveTo(px + 0.5, h / 2 - hi / peak * (h / 2 - 16)); g.lineTo(px + 0.5, h / 2 - lo / peak * (h / 2 - 16));
+    }
+    g.stroke();
+    if (seg) {
+      g.font = '600 11px system-ui, sans-serif'; g.textAlign = 'center'; g.fillStyle = css('--ink');
+      for (let i = 0; i < seg.s1.length; i++) {
+        if (seg.s1[i] >= t0) g.fillText('lub', X(seg.s1[i]), 12);
+        if (seg.s2[i] >= t0 && seg.s2[i] <= t0 + span) g.fillText('dub', X(seg.s2[i]), 12);
+      }
+    }
+    $('hsScale').textContent = seg
+      ? `last 3 s · lub = S1, dub = S2 · shaded = gap between them${murmurish ? ', where a whoosh was heard' : ''}`
+      : 'heart sounds · last 6 s';
+  }
+
+  const pct = (v) => `${Math.round(v * 100)}%`;
+
+  function hsShow(r, sample) {
     const box = $('hsVerdict'); box.hidden = false;
+    $('hsSampleTag').hidden = !sample;
+    $('hsSampleTag').textContent = sample ? `${SAMPLES[sample].name} · a real recording from the CirCor dataset, not you` : '';
     $('hsMeta').innerHTML = '';
     const meta = (t) => { const s2 = document.createElement('span'); s2.textContent = t; $('hsMeta').append(s2); };
-    $('hsBass').innerHTML = r.bassDb == null ? '--<span>dB</span>' : `${Math.round(r.bassDb)}<span>dB</span>`;
-    $('hsClarity').textContent = r.clarity == null ? '--' : `${Math.round(r.clarity * 100)}%`;
-    if (r.verdict === 'ok') {
-      const strong = r.clarity >= 0.6;
-      box.className = `verdict ${strong ? 'clear' : 'unclear'}`;
-      $('hsHead').textContent = strong ? 'Your phone can hear your heart' : 'Heartbeat heard, but faint';
-      $('hsText').textContent = strong
-        ? `A clear, steady heartbeat at about ${Math.round(r.heartRate)} beats per minute. This phone works for heart sounds.`
-        : `A heartbeat at about ${Math.round(r.heartRate)} beats per minute, but not very clear. Press more firmly on bare skin in a quieter room and try again.`;
-      $('hsBpm').textContent = Math.round(r.heartRate);
-      $('hsBeats').textContent = String(r.beats.length);
-      $('hsStatus').textContent = 'Done. Play it back, or check the number against a pulse reading.';
-      // The beats, drawn over the last 6 seconds of the recording.
-      const n = Math.round(6 * r.rate), y = Array.from(r.filtered.subarray(Math.max(0, r.filtered.length - n)));
-      const t0 = (r.filtered.length - y.length) / r.rate;
-      plot($('hsTrace'), y, { marks: r.beats.filter((b) => b >= t0).map((b) => [(b - t0) * r.rate - 0.02 * r.rate, (b - t0) * r.rate + 0.02 * r.rate]) });
-      $('hsScale').textContent = 'heart sounds · last 6 s · shaded = beats found';
+    $('hsClarity').textContent = r.clarity == null ? '--' : pct(r.clarity);
+    const where = sample ? 'in this recording' : `at the ${SPOTS[r.spot].name} spot`;
+    const m = r.murmur;
+    $('hsMurmur').textContent = m ? pct(m.p) : '--';
+    $('hsMurmurBar').hidden = !m;
+    if (m) {
+      const i = $('hsMurmurBar').querySelector('i');
+      i.style.width = pct(m.p); i.className = m.level === 'possible' ? 'bad' : m.level === 'unclear' ? 'warn' : '';
+    }
+    if (r.verdict === 'ok' && m) {
+      const beats = `${Math.round(m.loudSystoleShare * m.beats)} of ${m.beats} beats`;
+      if (m.level === 'possible') {
+        box.className = 'verdict flat';
+        $('hsHead').textContent = 'Possible heart murmur';
+        $('hsText').textContent = `A whooshing sound was heard between the lub and the dub ${where} (${beats}). `
+          + 'A murmur can come from a heart valve problem, such as rheumatic heart disease, or a hole in the heart. Many murmurs in children are harmless. '
+          + 'See a doctor: a heart scan (echocardiogram) can tell which it is.';
+      } else if (m.level === 'unclear') {
+        box.className = 'verdict unclear';
+        $('hsHead').textContent = 'Murmur unclear';
+        $('hsText').textContent = `There was some sound between the beats ${where}, but not clearly a murmur. Record again in a quiet room, and check the other chest spots.`;
+      } else {
+        box.className = 'verdict clear';
+        $('hsHead').textContent = 'No murmur heard';
+        $('hsText').textContent = `Clear lub and dub ${where}, with quiet between them. This check misses about 1 in 5 murmurs, mostly soft ones, so it does not replace a doctor listening.`;
+      }
+    } else if (r.verdict === 'ok') {
+      box.className = 'verdict unclear';
+      $('hsHead').textContent = 'Heartbeat heard, murmur not checked';
+      $('hsText').textContent = `A heartbeat at about ${Math.round(r.heartRate)} beats per minute, but too few clean beats to check for a murmur. Press firmer on bare skin, keep silent, and record again.`;
     } else {
       box.className = 'verdict flat';
       $('hsHead').textContent = r.code === 'short' ? 'Too short' : 'No clear heartbeat heard';
       $('hsText').textContent = r.problem;
-      $('hsBpm').textContent = '--'; $('hsBeats').textContent = '--';
+    }
+    if (r.verdict === 'ok') {
+      $('hsBpm').textContent = Math.round(r.heartRate);
+      $('hsStatus').textContent = sample ? 'Sample checked. Play it to hear it.' : nextSpot() ? 'Done. Play it back, or check the next chest spot.' : 'All four spots checked.';
+      hsDraw(r);
+    } else {
+      $('hsBpm').textContent = '--';
       $('hsStatus').textContent = 'Try again, or download the recording so it can be checked.';
       if (r.filtered) plot($('hsTrace'), Array.from(r.filtered.subarray(Math.max(0, r.filtered.length - Math.round(6 * r.rate)))));
     }
     if (r.seconds) meta(`${Math.round(r.seconds)} s recorded`);
-    if (r.bassDb != null) meta(`Heart-band level ${Math.round(r.bassDb)} dB of ${Math.round(r.fullDb)} dB total`);
+    if (m) meta(`Murmur score ${pct(m.p)} · possible from ${pct(Heart.MURMUR_POSSIBLE)}, unclear from ${pct(Heart.MURMUR_UNCLEAR)}`);
+    if (r.bassDb != null) meta(`Heart-band level ${Math.round(r.bassDb)} dB`);
   }
 
-  async function hsPlay(boosted) {
-    if (!hs.last) return;
-    const { r, raw, rate } = hs.last;
-    const Ctx = window.AudioContext || window.webkitAudioContext, ctx = new Ctx();
-    let data, sr;
-    if (boosted) {
-      data = Heart.audible(r.envelope || Heart.envelope(Heart.filterAll(raw, rate).y, Heart.RATE), raw.length / rate, 22050); sr = 22050;
-    } else {
-      // The heart band at the original rate, made louder.
-      const f = Heart.createFilter(rate), y = f.push(raw), up = Math.round(rate / f.rate);
-      data = new Float32Array(y.length * up);
-      for (let i = 0; i < y.length; i++) data.fill(y[i], i * up, (i + 1) * up);
-      sr = f.rate * up;
+  /** Per-spot results and the overall answer across the spots checked. */
+  function hsSpotsRender() {
+    const list = $('hsSpotList'); list.innerHTML = '';
+    for (const [code, spot] of Object.entries(SPOTS)) {
+      const r = hs.spots[code], li = document.createElement('li'), b = document.createElement('b'), span = document.createElement('span');
+      b.textContent = spot.name;
+      const m = r && r.murmur;
+      span.textContent = !r ? 'not checked' : !m ? `heartbeat ${Math.round(r.heartRate)} bpm, murmur not checked` : `${m.level === 'possible' ? 'possible murmur' : m.level === 'unclear' ? 'unclear' : 'no murmur'} · score ${pct(m.p)}`;
+      if (m) span.className = m.level === 'possible' ? 'bad' : m.level === 'unclear' ? 'warn' : 'good';
+      li.append(b, span); list.append(li);
+      const btn = document.querySelector(`#hsSpots button[data-spot="${code}"]`);
+      if (btn) btn.classList.toggle('done', !!r);
     }
-    let peak = 0; for (const v of data) peak = Math.max(peak, Math.abs(v));
-    const gain = peak ? 0.9 / peak : 1;
-    const buf = ctx.createBuffer(1, data.length, sr), ch = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) ch[i] = data[i] * gain;
+    const all = Heart.combineSpots(Object.entries(hs.spots).map(([spot, r]) => ({ ...r, spot })));
+    const box = $('hsOverall');
+    box.hidden = !all;
+    if (!all) return;
+    box.className = `verdict overall ${all.level === 'possible' ? 'flat' : all.level === 'unclear' ? 'unclear' : 'clear'}`;
+    $('hsOverallHead').textContent = all.level === 'possible' ? 'Overall: possible heart murmur' : all.level === 'unclear' ? 'Overall: unclear' : 'Overall: no murmur heard';
+    $('hsOverallText').textContent = all.level === 'possible'
+      ? `Loudest at the ${SPOTS[all.spot].name} spot. Please see a doctor for a heart scan (echocardiogram).`
+      : all.level === 'unclear'
+        ? `Not clear at the ${SPOTS[all.spot].name} spot. Record that spot again in a quiet room.`
+        : `${all.spots} of 4 spots checked, none sounded like a murmur.${all.spots < 4 ? ' Checking all four catches more murmurs.' : ''}`;
+  }
+
+  /** 16-bit PCM WAV to samples. */
+  function readWav(buf) {
+    const dv = new DataView(buf); let p = 12, rate = 0;
+    while (p < dv.byteLength - 8) {
+      const id = String.fromCharCode(dv.getUint8(p), dv.getUint8(p + 1), dv.getUint8(p + 2), dv.getUint8(p + 3)), n = dv.getUint32(p + 4, true);
+      if (id === 'fmt ') rate = dv.getUint32(p + 12, true);
+      if (id === 'data') { const x = new Float32Array(Math.min(n, dv.byteLength - p - 8) >> 1); for (let i = 0; i < x.length; i++) x[i] = dv.getInt16(p + 8 + 2 * i, true) / 32768; return { x, rate }; }
+      p += 8 + n + (n & 1);
+    }
+    throw new Error('Not a WAV file');
+  }
+
+  async function hsSample(kind, check) {
+    setNotice($('hsNotice'), '');
+    try {
+      if (!hs.samples[kind]) hs.samples[kind] = readWav(await (await fetch(SAMPLES[kind].file)).arrayBuffer());
+    } catch { setNotice($('hsNotice'), 'Could not load the sample recording.'); return; }
+    const { x, rate } = hs.samples[kind];
+    const r = Heart.analyze(x, rate);
+    if (check) {
+      hs.last = { r, raw: x, rate, sample: kind };
+      hsShow(r, kind);
+      $('hsActions').hidden = true; $('hsResultActions').hidden = false; $('hsNext').hidden = true; $('hsDownload').hidden = true;
+      $('hsPlayBoost').disabled = $('hsPlayReal').disabled = !r.wide;
+      $('heartUi').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    if (r.wide) play(Heart.audible(r.wide, r.rate));
+  }
+
+  let player = null;
+  function play({ samples, sampleRate }) {
+    try { if (player) player.close(); } catch { /* already closed */ }
+    const ctx = player = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = ctx.createBuffer(1, samples.length, sampleRate);
+    buf.getChannelData(0).set(samples);
     const node = ctx.createBufferSource(); node.buffer = buf; node.connect(ctx.destination);
-    node.onended = () => ctx.close();
+    node.onended = () => { try { ctx.close(); } catch { /* fine */ } };
     node.start();
   }
 
+  function hsPlay(boosted) {
+    if (!hs.last || !hs.last.r.wide) return;
+    const { r } = hs.last;
+    if (boosted) { play(Heart.audible(r.wide, r.rate)); return; }
+    // The real sound, only louder, for earphones (phone speakers cannot play it).
+    const up = 4, out = new Float32Array(r.wide.length * up);
+    let peak = 1e-12; for (const v of r.wide) peak = Math.max(peak, Math.abs(v));
+    for (let i = 0; i < out.length; i++) { const p = i / up, k = Math.floor(p), f = p - k; out[i] = 0.9 * ((r.wide[k] || 0) * (1 - f) + (r.wide[k + 1] || 0) * f) / peak; }
+    play({ samples: out, sampleRate: Math.round(r.rate * up) });
+  }
+
+  document.querySelectorAll('#hsSpots button').forEach((b) => b.addEventListener('click', () => !hs.run && hsSpot(b.dataset.spot)));
   $('hsStart').addEventListener('click', hsStart);
   $('hsStop').addEventListener('click', () => hs.run && hs.run.cancel());
   $('hsPlayBoost').addEventListener('click', () => hsPlay(true));
   $('hsPlayReal').addEventListener('click', () => hsPlay(false));
-  $('hsAgain').addEventListener('click', () => { $('hsResultActions').hidden = true; $('hsActions').hidden = false; $('hsVerdict').hidden = true; });
+  $('hsNext').addEventListener('click', () => { const k = nextSpot(); if (k) hsSpot(k); $('hsResultActions').hidden = true; $('hsActions').hidden = false; $('hsVerdict').hidden = true; $('hsSampleTag').hidden = true; });
+  $('hsAgain').addEventListener('click', () => { $('hsResultActions').hidden = true; $('hsActions').hidden = false; $('hsVerdict').hidden = true; $('hsSampleTag').hidden = true; });
+  $('hsReset').addEventListener('click', () => { hs.spots = {}; hsSpotsRender(); });
+  $('hsPlayNormal').addEventListener('click', () => hsSample('normal', false));
+  $('hsPlayMurmur').addEventListener('click', () => hsSample('murmur', false));
+  $('hsCheckNormal').addEventListener('click', () => hsSample('normal', true));
+  $('hsCheckMurmur').addEventListener('click', () => hsSample('murmur', true));
+  window.addEventListener('resize', () => { if (hs.last && !hs.run && !$('heartUi').hidden && hs.last.r.verdict === 'ok') hsDraw(hs.last.r); });
+  hsSpot('PV');
+  hsSpotsRender();
 
   // =====================================================================
   window.Features = {
@@ -854,7 +1009,7 @@
       $('heartUi').hidden = mode !== 'heart';
       if (mode === 'tremor') plot($('trTrace'), []);
       if (mode === 'sleep') plot($('slTrace'), []);
-      if (mode === 'heart') plot($('hsTrace'), []);
+      if (mode === 'heart') { if (hs.last && hs.last.r.verdict === 'ok') hsDraw(hs.last.r); else plot($('hsTrace'), []); }
     },
   };
   trRender();
