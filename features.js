@@ -206,7 +206,8 @@
   // =====================================================================
   const st = { face: null, arms: { left: null, right: null }, speech: null, run: null };
   const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
-  let landmarker = null;
+  const HF = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+  let landmarker = null, asrModel = null;
 
   async function getLandmarker() {
     if (landmarker) return landmarker;
@@ -219,30 +220,85 @@
     return landmarker;
   }
 
-  function stSummary() {
-    const signs = [];
-    if (st.face && st.face.sign) signs.push(`the ${st.face.weaker} side of the mouth lifted less`);
-    const { left, right } = st.arms;
-    let armSign = null;
-    if (left && right) { const c = Motion.compareArms(left, right); if (c.sign) armSign = c.weaker; }
-    else if ((left && left.drifted) || (right && right.drifted)) armSign = left && left.drifted ? 'left' : 'right';
-    if (armSign) signs.push(`the ${armSign} arm drifted`);
-    if (st.speech && st.speech !== 'normal') signs.push(st.speech === 'none' ? 'could not speak' : 'speech was slurred or wrong');
-    const done = st.face && left && right && st.speech;
-    const box = $('stSummary');
-    if (signs.length) {
-      box.hidden = false; box.className = 'verdict flat';
-      $('stSummaryHead').textContent = 'Possible stroke sign: call 108 now';
-      $('stSummaryText').textContent = `Found: ${signs.join('; ')}. Call 108 and tell them the time the symptoms started (now ${new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}). Do not give food, drink or medicine.`;
-    } else if (done) {
-      box.hidden = false; box.className = 'verdict unclear';
-      $('stSummaryHead').textContent = 'No signs found in these checks';
-      $('stSummaryText').textContent = 'This does not rule out a stroke. If symptoms started suddenly (numbness, confusion, trouble seeing or walking, a sudden severe headache), call 108 anyway.';
-    } else box.hidden = true;
+  /** Whisper tiny (English), downloaded once and cached by the browser; runs on the phone. */
+  async function getAsr(onProgress) {
+    if (asrModel) return asrModel;
+    const { pipeline } = await import(`${HF}/dist/transformers.min.js`);
+    asrModel = await pipeline('automatic-speech-recognition', 'onnx-community/whisper-tiny.en', {
+      dtype: 'q8',
+      progress_callback: (p) => { if (p.status === 'progress' && p.total > 1e6) onProgress(p.loaded / p.total); },
+    });
+    return asrModel;
   }
 
-  // ---- F: face ----
+  /** Horizontal bars, e.g. how much each side lifted. rows: [{label, value, max, bad, text}] */
+  function bars(el, rows) {
+    el.innerHTML = '';
+    for (const r of rows) {
+      const row = document.createElement('div'), label = document.createElement('span'), track = document.createElement('span'), fill = document.createElement('i'), val = document.createElement('b');
+      label.textContent = r.label; track.className = 'track';
+      fill.style.width = `${Math.max(2, Math.min(100, r.value / r.max * 100))}%`; if (r.bad) fill.className = 'bad';
+      track.append(fill); val.textContent = r.text;
+      row.append(label, track, val); el.append(row);
+    }
+  }
+
+  function setResult(prefix, cls, head, text) {
+    const box = $(`${prefix}Result`);
+    box.hidden = false; box.className = `verdict ${cls}`;
+    $(`${prefix}Head`).textContent = head; $(`${prefix}Text`).textContent = text;
+  }
+  const setChip = (id, cls, text) => { $(id).className = chipOf[cls]; $(id).textContent = text; };
+
+  /** Arm sign: either arm drifted, or one drifted much more than the other. */
+  function armsVerdict() {
+    const { left, right } = st.arms;
+    if (!left || !right) return null;
+    return Motion.compareArms(left, right);
+  }
+
+  /** The overall FAST result once all three steps are done; progress before that. */
+  function stOverall() {
+    const arms = armsVerdict();
+    const steps = [
+      { id: 'pgF', name: 'Face', done: !!st.face, sign: st.face && st.face.sign,
+        say: st.face ? (st.face.sign ? `${cap(st.face.weaker)} side of the mouth lifted less` : 'Even smile') : 'Not done' },
+      { id: 'pgA', name: 'Arms', done: !!arms, sign: arms && arms.sign,
+        say: arms ? (arms.sign ? `${cap(arms.weaker)} arm drifted` : 'Both arms steady') : (st.arms.left || st.arms.right ? 'One arm done' : 'Not done') },
+      { id: 'pgS', name: 'Speech', done: !!st.speech, sign: st.speech && st.speech.sign,
+        say: st.speech ? (st.speech.none ? 'Could not speak' : st.speech.sign ? 'Unclear or slow speech' : 'Clear speech') : 'Not done' },
+    ];
+    for (const s of steps) $(s.id).className = s.sign ? 'sign' : s.done ? 'done' : '';
+    const tally = $('stTally'); tally.innerHTML = '';
+    for (const s of steps) {
+      const li = document.createElement('li'), b = document.createElement('b'), t = document.createElement('span');
+      b.textContent = `${s.sign ? '✗' : s.done ? '✓' : '·'} ${s.name}`; b.style.color = s.sign ? 'var(--bad)' : s.done ? 'var(--good)' : 'var(--muted)';
+      t.textContent = s.say; li.append(b, t); tally.append(li);
+    }
+    const signs = steps.filter((s) => s.sign).length, done = steps.every((s) => s.done);
+    const box = $('stOverall');
+    $('stOverallActions').hidden = !(signs || done);
+    $('pgR').className = signs ? 'sign' : done ? 'done' : '';
+    if (signs) {
+      box.className = 'verdict overall flat';
+      $('stOverallHead').textContent = `Possible stroke: ${signs} of 3 signs found`;
+      $('stOverallText').textContent = `Call 108 now. Ambulance services treat even one of these signs, starting suddenly, as a stroke until a hospital scan shows otherwise. Tell them when the symptoms started (it is now ${new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}). Do not give food, drink or medicine.`;
+    } else if (done) {
+      box.className = 'verdict overall clear';
+      $('stOverallHead').textContent = 'No stroke signs found';
+      $('stOverallText').textContent = 'Face, arms and speech all looked normal in this check. This does not rule out a stroke: if there is sudden numbness, confusion, trouble seeing or walking, or a sudden severe headache, call 108 anyway.';
+    } else {
+      box.className = 'verdict overall';
+      $('stOverallHead').textContent = 'Overall result';
+      $('stOverallText').textContent = `Do all three checks to see the overall result (${steps.filter((s) => s.done).length} of 3 done).`;
+    }
+    if (done || signs) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  const cap = (w) => w[0].toUpperCase() + w.slice(1);
+
+  // ---- 1. Face ----
   async function faceStart() {
+    if (st.run) return;
     const video = $('stVideo'), marks = $('stMarks');
     $('fResult').hidden = true;
     let stream = null, cancelled = false;
@@ -262,7 +318,9 @@
       await getLandmarker();
     } catch (e) {
       finish();
-      $('fStatus').textContent = e && e.name === 'NotAllowedError' ? 'Camera permission was not given.' : 'Could not start the face check on this browser.';
+      $('fStatus').textContent = '';
+      setResult('f', '', 'Could not start', e && e.name === 'NotAllowedError' ? 'Camera permission was not given. Allow the camera and try again.' : 'The face check could not start on this browser. Try Chrome.');
+      $('fBars').innerHTML = '';
       return;
     }
     keepAwake(true);
@@ -282,22 +340,30 @@
       }
       return out;
     };
-    $('fStatus').textContent = 'Hold the phone at arm\'s length, face in good light.';
+    $('fStatus').textContent = '';
     await wait(800);
     const rest = await collect('Relax your face', 2500, 'Relax your face');
     const smile = await collect('Big smile! Show your teeth', 3000, 'Now a big smile, show your teeth');
     finish();
-    if (cancelled) { $('fStatus').textContent = 'Stopped.'; return; }
+    if (cancelled) return;
     const r = Stroke.droop(rest, smile);
-    if (r.verdict !== 'ok') { $('fStatus').textContent = r.problem; return; }
+    if (r.verdict !== 'ok') {
+      setResult('f', 'unclear', 'Try again', r.problem); $('fBars').innerHTML = '';
+      setChip('fChip', 'warn', 'Try again');
+      return;
+    }
     st.face = r;
-    $('fStatus').textContent = '';
-    $('fResult').hidden = false;
-    $('fResult').className = `verdict ${r.sign ? 'flat' : 'clear'}`;
-    $('fHead').textContent = r.sign ? `The ${r.weaker} side lifted much less` : 'Both sides lifted evenly';
-    $('fText').textContent = `Mouth corner lift, right ${Math.round(r.liftRight * 100) || 0} and left ${Math.round(r.liftLeft * 100) || 0} (hundredths of the eye distance). The weaker side lifted ${Math.round(r.ratio * 100)}% as much as the other.`;
-    $('fChip').className = r.sign ? 'chip bad' : 'chip good'; $('fChip').textContent = r.sign ? 'Sign found' : 'Even';
-    stSummary();
+    const pct = (v) => Math.max(0, Math.round(v * 100)) || 0, max = Math.max(r.liftRight, r.liftLeft);
+    setResult('f', r.sign ? 'flat' : 'clear',
+      r.sign ? `Sign found: the ${r.weaker} side lifted much less` : 'Normal: both sides lifted evenly',
+      r.sign ? `The ${r.weaker} side of the mouth lifted only ${Math.round(r.ratio * 100)}% as much as the other side. Facial droop on one side is a stroke sign.`
+        : `The weaker side lifted ${Math.round(r.ratio * 100)}% as much as the other, which counts as even.`);
+    bars($('fBars'), [
+      { label: 'Right side', value: Math.max(0, r.liftRight), max, bad: r.sign && r.weaker === 'right', text: `${pct(r.liftRight)}` },
+      { label: 'Left side', value: Math.max(0, r.liftLeft), max, bad: r.sign && r.weaker === 'left', text: `${pct(r.liftLeft)}` },
+    ]);
+    setChip('fChip', r.sign ? 'bad' : 'good', r.sign ? 'Sign found' : 'Normal');
+    stOverall();
   }
 
   function drawMarks(canvas, video, pts) {
@@ -314,7 +380,7 @@
     for (const i of [Stroke.EYE_RIGHT, Stroke.EYE_LEFT, Stroke.MOUTH_RIGHT, Stroke.MOUTH_LEFT]) { const [x, y] = P(i); g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill(); }
   }
 
-  // ---- A: arms ----
+  // ---- 2. Arms ----
   async function armStart(side) {
     if (st.run) return;
     const samples = [];
@@ -323,10 +389,11 @@
     let cancelled = false;
     st.run = { cancel() { cancelled = true; } };
     $('aLeft').disabled = $('aRight').disabled = true;
+    $('aStatus').textContent = '';
     keepAwake(true);
     const prompt = $('aPrompt'); prompt.hidden = false;
     for (let k = 4; k > 0 && !cancelled; k--) {
-      prompt.textContent = `${side === 'left' ? 'Left' : 'Right'} arm straight out, phone flat on the palm… ${k}`;
+      prompt.textContent = `${cap(side)} arm straight out, phone flat on the palm… ${k}`;
       if (k === 4) cue(`Hold your ${side} arm straight out, with the phone flat on your palm.`, { beep: false });
       await wait(1000);
     }
@@ -339,45 +406,153 @@
     $('aLeft').disabled = $('aRight').disabled = false;
     if (cancelled) return;
     const r = Motion.armDrift(samples);
-    if (r.verdict !== 'ok') { $('aStatus').textContent = r.problem; return; }
+    const key = side === 'left' ? 'aLeft' : 'aRight';
+    if (r.verdict !== 'ok') { setResult(key, 'unclear', `${cap(side)} arm: try again`, r.problem); return; }
     st.arms[side] = r;
-    $('aStatus').textContent = '';
-    const { left, right } = st.arms;
-    $('aResults').textContent = [left && `Left arm tilted ${left.driftDeg.toFixed(1)}°`, right && `Right arm tilted ${right.driftDeg.toFixed(1)}°`].filter(Boolean).join(' · ');
-    const box = $('aResult');
-    if (left && right) {
-      const c = Motion.compareArms(left, right);
-      box.hidden = false; box.className = `verdict ${c.sign ? 'flat' : 'clear'}`;
-      $('aHead').textContent = c.sign ? `The ${c.weaker} arm drifted` : 'Both arms stayed steady';
-      $('aText').textContent = c.sign
-        ? `A weak arm slowly sinks or turns with the eyes closed. The difference between the arms was ${c.gapDeg.toFixed(1)}°.`
-        : `Both arms tilted less than ${Motion.DRIFT_DEG}° and within ${Motion.DRIFT_GAP_DEG}° of each other.`;
-      $('aChip').className = c.sign ? 'chip bad' : 'chip good'; $('aChip').textContent = c.sign ? 'Sign found' : 'Steady';
+    // Each arm's own result straight away.
+    setResult(key, r.drifted ? 'flat' : 'clear',
+      r.drifted ? `${cap(side)} arm: drifted ${r.driftDeg.toFixed(1)}°` : `${cap(side)} arm: steady (${r.driftDeg.toFixed(1)}°)`,
+      r.drifted ? `The arm sank or turned by more than ${Motion.DRIFT_DEG}° with the eyes closed, which can mean weakness.` : `It moved less than ${Motion.DRIFT_DEG}° in 10 seconds with the eyes closed.`);
+    const { left, right } = st.arms, c = armsVerdict();
+    if (c) {
+      setResult('a', c.sign ? 'flat' : 'clear',
+        c.sign ? `Sign found: the ${c.weaker} arm drifted` : 'Normal: both arms stayed steady',
+        c.sign ? `A weak arm slowly sinks or turns when the eyes are closed. The arms differed by ${c.gapDeg.toFixed(1)}°.` : `Both arms moved less than ${Motion.DRIFT_DEG}° and within ${Motion.DRIFT_GAP_DEG}° of each other.`);
+      const max = Math.max(20, left.driftDeg, right.driftDeg);
+      bars($('aBars'), [
+        { label: 'Left arm', value: left.driftDeg, max, bad: c.sign && c.weaker === 'left', text: `${left.driftDeg.toFixed(1)}°` },
+        { label: 'Right arm', value: right.driftDeg, max, bad: c.sign && c.weaker === 'right', text: `${right.driftDeg.toFixed(1)}°` },
+      ]);
+      setChip('aChip', c.sign ? 'bad' : 'good', c.sign ? 'Sign found' : 'Normal');
     } else {
-      $('aStatus').textContent = `Now do the ${left ? 'right' : 'left'} arm.`;
-      $('aChip').className = 'chip warn'; $('aChip').textContent = 'One arm done';
+      $('aStatus').textContent = `Now test the ${left ? 'right' : 'left'} arm.`;
+      setChip('aChip', r.drifted ? 'bad' : 'warn', r.drifted ? 'Sign found' : 'One arm done');
     }
-    stSummary();
+    stOverall();
   }
 
-  // ---- S: speech (judged by the person helping) ----
-  function speech(answer) {
-    st.speech = answer;
-    for (const id of ['sNormal', 'sSlurred', 'sNone']) $(id).hidden = !!answer;
-    $('sReset').hidden = !answer;
-    $('sChip').className = !answer ? 'chip' : answer === 'normal' ? 'chip good' : 'chip bad';
-    $('sChip').textContent = !answer ? 'Not done' : answer === 'normal' ? 'Clear' : answer === 'none' ? 'Could not speak' : 'Slurred';
-    stSummary();
+  // ---- 3. Speech ----
+  /** Average down to 16 kHz for the speech model. */
+  function to16k(x, rate) {
+    const ratio = rate / 16000, out = new Float32Array(Math.floor(x.length / ratio));
+    for (let i = 0; i < out.length; i++) {
+      const a = Math.floor(i * ratio), b = Math.max(a + 1, Math.floor((i + 1) * ratio));
+      let s = 0; for (let k = a; k < b; k++) s += x[k]; out[i] = s / (b - a);
+    }
+    return out;
+  }
+
+  async function speechStart() {
+    if (st.run) return;
+    $('sResult').hidden = true;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    } catch (e) {
+      $('sStatus').textContent = e && e.name === 'NotAllowedError' ? 'Microphone permission was not given.' : 'Could not open the microphone.';
+      return;
+    }
+    // Start downloading the model while the person speaks.
+    let progress = 0;
+    const model = getAsr((p) => { progress = p; }).catch(() => null);
+    const ctx = new Ctx(); await ctx.resume();
+    const src = ctx.createMediaStreamSource(stream), proc = ctx.createScriptProcessor(4096, 1, 1), mute = ctx.createGain();
+    mute.gain.value = 0;
+    const chunks = [];
+    let level = 0, done = false, spoke = false, quietSince = 0;
+    proc.onaudioprocess = (e) => {
+      const x = e.inputBuffer.getChannelData(0); chunks.push(new Float32Array(x));
+      let m = 0; for (let i = 0; i < x.length; i++) m = Math.max(m, Math.abs(x[i]));
+      level = m;
+    };
+    src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+    st.run = { cancel() { done = true; } };
+    $('sStart').hidden = true; $('sNone').hidden = true; $('sStop').hidden = false; $('sMeter').hidden = false;
+    $('sStatus').textContent = 'Say the sentence now.';
+    cue(null);
+    const t0 = performance.now();
+    // Stop by itself after 3 s of quiet following speech (halting speakers pause), or after 20 s.
+    while (!done && performance.now() - t0 < 20000) {
+      await wait(100);
+      const db = 20 * Math.log10(level + 1e-6);
+      $('sLevel').style.width = `${Math.max(0, Math.min(100, (db + 60) / 60 * 100))}%`;
+      $('sMeterText').textContent = db > -35 ? 'Hearing you…' : spoke ? 'Listening… (stops after a short silence)' : 'Listening… speak now';
+      if (db > -35) { spoke = true; quietSince = performance.now(); }
+      else if (spoke && performance.now() - quietSince > 3000) break;
+    }
+    proc.disconnect(); src.disconnect(); stream.getTracks().forEach((t) => t.stop());
+    const rate = ctx.sampleRate; ctx.close();
+    $('sStop').hidden = true; $('sMeter').hidden = true;
+    const all = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
+    let at = 0; for (const c of chunks) { all.set(c, at); at += c.length; }
+    const timing = Stroke.speechTiming(all, rate);
+
+    let heard = null;
+    if (timing.voiced) {
+      const tick = setInterval(() => { $('sStatus').textContent = progress && progress < 1 ? `Downloading the speech model… ${Math.round(progress * 100)}%` : 'Checking the words…'; }, 200);
+      const asr = await model;
+      if (asr) {
+        // Only the stretch with speech, plus a little either side.
+        const from = Math.max(0, Math.floor((timing.startS - 0.3) * rate)), to = Math.min(all.length, Math.ceil((timing.startS + timing.durationS + 0.4) * rate));
+        try { heard = (await asr(to16k(all.subarray(from, to), rate))).text.trim(); } catch { heard = null; }
+      }
+      clearInterval(tick);
+    }
+    st.run = null;
+    $('sStart').hidden = false; $('sNone').hidden = false; $('sStatus').textContent = '';
+    showSpeech(Stroke.speechCheck({ timing, heard }), heard);
+  }
+
+  function showSpeech(r, heard) {
+    $('sStart').textContent = 'Check speech again';
+    if (r.verdict !== 'ok') {
+      setResult('s', 'unclear', 'Try again', r.problem); $('sHeard').textContent = '';
+      setChip('sChip', 'warn', 'Try again');
+      return;
+    }
+    // A low word score alone may just be an accent: ask once more before counting it.
+    const onlyWords = r.sign && r.reasons.length === 1 && r.match && r.match.share < Stroke.MIN_WORDS;
+    if (onlyWords && !st.speechRetried) {
+      st.speechRetried = true;
+      setResult('s', 'unclear', 'Please say it once more', `The phone did not catch all the words (${r.match.matched} of ${r.match.total}). Speak clearly towards the phone. If it happens again, it will count as a sign.`);
+      $('sHeard').textContent = heard ? `Heard: “${heard}”` : '';
+      setChip('sChip', 'warn', 'Once more');
+      return;
+    }
+    st.speech = r;
+    setResult('s', r.sign ? 'flat' : 'clear',
+      r.sign ? 'Sign found: speech was unclear or slow' : 'Normal: speech was clear',
+      r.sign ? `${cap(r.reasons.join('; '))}. Slurred, slow or wrong words can be a stroke sign.`
+        : `${r.match ? `All ${r.match.total} words` : 'The sentence'} came out in ${r.durationS.toFixed(1)} s without long stops.`);
+    $('sHeard').textContent = heard != null ? `Heard: “${heard}”` : 'The speech model could not run here, so only the timing was checked.';
+    setChip('sChip', r.sign ? 'bad' : 'good', r.sign ? 'Sign found' : 'Normal');
+    stOverall();
   }
 
   $('fStart').addEventListener('click', faceStart);
   $('fStop').addEventListener('click', () => st.run && st.run.cancel());
   $('aLeft').addEventListener('click', () => armStart('left'));
   $('aRight').addEventListener('click', () => armStart('right'));
-  $('sNormal').addEventListener('click', () => speech('normal'));
-  $('sSlurred').addEventListener('click', () => speech('slurred'));
-  $('sNone').addEventListener('click', () => speech('none'));
-  $('sReset').addEventListener('click', () => speech(null));
+  $('sStart').addEventListener('click', speechStart);
+  $('sStop').addEventListener('click', () => st.run && st.run.cancel());
+  $('sNone').addEventListener('click', () => {
+    if (st.run) return;
+    st.speech = { verdict: 'ok', sign: true, none: true, reasons: ['could not speak'] };
+    setResult('s', 'flat', 'Sign found: could not speak', 'Being unable to speak, or to understand, is a stroke sign.');
+    $('sHeard').textContent = '';
+    setChip('sChip', 'bad', 'Sign found');
+    stOverall();
+  });
+  $('stReset').addEventListener('click', () => {
+    Object.assign(st, { face: null, arms: { left: null, right: null }, speech: null, speechRetried: false });
+    for (const id of ['fResult', 'aLeftResult', 'aRightResult', 'aResult', 'sResult']) $(id).hidden = true;
+    for (const id of ['fChip', 'aChip', 'sChip']) setChip(id, 'none', 'Not done');
+    $('sStart').textContent = 'Start speech check'; $('aStatus').textContent = '';
+    stOverall();
+    $('strokeUi').scrollIntoView({ behavior: 'smooth' });
+  });
+  stOverall();
 
   // =====================================================================
   // Sleep (sonar)

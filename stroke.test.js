@@ -63,3 +63,44 @@ test('a one-sided smile, as in facial weakness, is flagged rather than sent back
   assert.equal(r.sign, true);
   assert.equal(r.weaker, 'left');
 });
+
+// ---- Speech ----
+
+test('word match: the right sentence, a slurred one, and a different one', () => {
+  assert.equal(Stroke.wordMatch(' You can\'t teach an old dog new tricks?').share, 1);
+  assert.equal(Stroke.wordMatch('you cant teach an old dog new trick').share, 1, 'one letter off in a long word still counts');
+  // What Whisper heard from slow, slurred speech (see the e2e recordings).
+  assert.ok(Stroke.wordMatch(' You can TNO DWE New Ticks').share < Stroke.MIN_WORDS);
+  assert.equal(Stroke.wordMatch('The cat is sitting on a red chair.').share, 0);
+});
+
+/** Speech-like test signal: bursts (syllables) of a 180 Hz buzz with gaps, plus room noise. */
+function talk({ bursts = 8, burstS = 0.18, gapS = 0.1, pauseAt = -1, pauseS = 0, level = 0.2, sr = 16000 }) {
+  const out = [];
+  const push = (s, on) => { for (let i = 0; i < s * sr; i++) out.push((on ? level * Math.sin(2 * Math.PI * 180 * i / sr) * Math.sin(Math.PI * i / (s * sr)) : 0) + 0.001 * Math.sin(i * 12.9898) ); };
+  push(0.5, false);
+  for (let b = 0; b < bursts; b++) { push(burstS, true); push(b === pauseAt ? pauseS : gapS, false); }
+  push(0.6, false);
+  return Float32Array.from(out);
+}
+
+test('speech timing: length and the longest pause', () => {
+  const normal = Stroke.speechTiming(talk({}), 16000);
+  assert.ok(normal.voiced);
+  assert.ok(Math.abs(normal.durationS - (8 * 0.28 - 0.1)) < 0.25, `duration ${normal.durationS}`);
+  assert.ok(normal.longestPauseS < 0.3, `pause ${normal.longestPauseS}`);
+  const halting = Stroke.speechTiming(talk({ pauseAt: 3, pauseS: 1.6 }), 16000);
+  assert.ok(Math.abs(halting.longestPauseS - 1.6) < 0.15, `pause ${halting.longestPauseS}`);
+  assert.equal(Stroke.speechTiming(new Float32Array(16000), 16000).voiced, false);
+});
+
+test('speech check: clear speech passes; wrong words, slow or halting speech is a sign', () => {
+  const timing = Stroke.speechTiming(talk({}), 16000);
+  assert.equal(Stroke.speechCheck({ timing, heard: 'You can\'t teach an old dog new tricks.' }).sign, false);
+  assert.equal(Stroke.speechCheck({ timing, heard: 'You can TNO DWE New Ticks' }).sign, true);
+  const slow = Stroke.speechTiming(talk({ burstS: 0.5, gapS: 0.3 }), 16000);
+  assert.equal(Stroke.speechCheck({ timing: slow, heard: 'You can\'t teach an old dog new tricks.' }).sign, true);
+  const halting = Stroke.speechTiming(talk({ pauseAt: 3, pauseS: 1.6 }), 16000);
+  assert.match(Stroke.speechCheck({ timing: halting, heard: null }).reasons.join(), /stopped/);
+  assert.equal(Stroke.speechCheck({ timing: Stroke.speechTiming(new Float32Array(16000), 16000), heard: '' }).code, 'silent');
+});

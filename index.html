@@ -148,7 +148,22 @@
   .confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
 
   [hidden] { display: none !important; }
-  a.callbtn { background: var(--bad); border-color: var(--bad); color: #fff; font-size: 18px; }
+  a.callbtn { background: var(--bad); border-color: var(--bad); color: var(--paper); font-size: 18px; }
+  .stepper { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .stepper li { text-align: center; font-size: 13px; font-weight: 700; padding: 8px 2px; border-radius: 8px; background: var(--line); color: var(--muted); }
+  .stepper li.done { background: var(--good-soft); color: var(--good); }
+  .stepper li.sign { background: var(--bad-soft); color: var(--bad); }
+  .bars { display: grid; gap: 6px; margin-top: 10px; }
+  .bars div { display: grid; grid-template-columns: 74px 1fr 64px; gap: 8px; align-items: center; font-size: 14px; }
+  .bars span.track { height: 12px; background: var(--line); border-radius: 99px; overflow: hidden; }
+  .bars span.track i { display: block; height: 100%; background: var(--good); border-radius: 99px; }
+  .bars span.track i.bad { background: var(--bad); }
+  .bars b { font: 600 14px var(--font-read); text-align: right; }
+  .heard { font-style: italic; }
+  .verdict.overall strong { font-size: 26px; }
+  .tally { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 16px; }
+  .tally li { display: flex; gap: 8px; align-items: baseline; }
+  .tally li b { min-width: 74px; }
   .mini { font-size: 15px; font-weight: 700; min-height: 1.4em; }
   .card .actions { margin-top: 4px; }
   .card .verdict { margin-top: 4px; }
@@ -583,47 +598,66 @@
       hospital within hours. Note the time the symptoms started.</p>
       <div class="actions" style="margin-top:10px"><a class="filebtn callbtn" href="tel:108">Call 108</a></div>
     </div>
-    <div class="verdict" id="stSummary" hidden><strong id="stSummaryHead"></strong><p id="stSummaryText"></p></div>
+
+    <ol class="stepper" aria-label="Progress">
+      <li id="pgF">1 · Face</li><li id="pgA">2 · Arms</li><li id="pgS">3 · Speech</li><li id="pgR">Result</li>
+    </ol>
 
     <div class="card">
-      <h3>F · Face <span class="chip" id="fChip">Not done</span></h3>
-      <p>Uses the selfie camera to compare how much each side of the mouth lifts in a smile.</p>
+      <h3>1 · Face <span class="chip" id="fChip">Not done</span></h3>
+      <p>Hold the phone at arm's length in good light. Relax, then give a big smile when asked. The camera compares how
+      much each side of the mouth lifts.</p>
       <div class="facecam" id="stCam" hidden><video id="stVideo" playsinline muted></video><canvas class="marks" id="stMarks"></canvas></div>
       <div class="bigprompt" id="fPrompt" hidden></div>
       <div class="mini" id="fStatus"></div>
-      <div class="verdict" id="fResult" hidden><strong id="fHead"></strong><p id="fText"></p></div>
+      <div class="verdict" id="fResult" hidden><strong id="fHead"></strong><p id="fText"></p><div class="bars" id="fBars"></div></div>
       <div class="actions"><button class="primary" id="fStart" type="button">Start face check</button><button class="quiet" id="fStop" type="button" hidden>Stop</button></div>
     </div>
 
     <div class="card">
-      <h3>A · Arms <span class="chip" id="aChip">Not done</span></h3>
-      <p>Sit up. Hold the phone flat on your palm, screen up, with the arm straight out in front. Close your eyes when told and
-      keep still for 10 seconds. The phone beeps and speaks when to open them. Then do the other arm.</p>
+      <h3>2 · Arms <span class="chip" id="aChip">Not done</span></h3>
+      <p>Sit up. Hold the phone flat on your palm, screen up, arm straight out in front. When the phone says so, close your
+      eyes and keep still for 10 seconds; it beeps and speaks when to open them. Then do the other arm.</p>
       <div class="bigprompt" id="aPrompt" hidden></div>
       <div class="mini" id="aStatus"></div>
-      <div class="result-line" id="aResults"></div>
-      <div class="verdict" id="aResult" hidden><strong id="aHead"></strong><p id="aText"></p></div>
-      <div class="actions"><button id="aLeft" type="button">Left arm</button><button id="aRight" type="button">Right arm</button></div>
+      <div class="verdict" id="aLeftResult" hidden><strong id="aLeftHead"></strong><p id="aLeftText"></p></div>
+      <div class="verdict" id="aRightResult" hidden><strong id="aRightHead"></strong><p id="aRightText"></p></div>
+      <div class="verdict" id="aResult" hidden><strong id="aHead"></strong><p id="aText"></p><div class="bars" id="aBars"></div></div>
+      <div class="actions"><button id="aLeft" type="button">Test left arm</button><button id="aRight" type="button">Test right arm</button></div>
     </div>
 
     <div class="card">
-      <h3>S · Speech <span class="chip" id="sChip">Not done</span></h3>
-      <p>Ask the person to say this sentence out loud. You judge it: the phone does not.</p>
+      <h3>3 · Speech <span class="chip" id="sChip">Not done</span></h3>
+      <p>Tap Start, then say this sentence out loud. The phone listens, writes down what it heard, and checks the words and
+      how smoothly they came out.</p>
       <div class="say">“You can't teach an old dog new tricks.”</div>
+      <div class="meter" id="sMeter" hidden><div class="bar"><i id="sLevel"></i></div><div class="fine"><span id="sMeterText">Listening…</span></div></div>
+      <div class="mini" id="sStatus"></div>
+      <div class="verdict" id="sResult" hidden><strong id="sHead"></strong><p id="sText"></p><p class="heard" id="sHeard"></p></div>
       <div class="actions">
-        <button id="sNormal" type="button">Clear and correct</button>
-        <button id="sSlurred" type="button">Slurred or wrong words</button>
-        <button id="sNone" type="button">Could not speak</button>
-        <button class="quiet" id="sReset" type="button" hidden>Change answer</button>
+        <button class="primary" id="sStart" type="button">Start speech check</button>
+        <button class="quiet" id="sStop" type="button" hidden>Done speaking</button>
+        <button class="quiet" id="sNone" type="button">They could not speak</button>
       </div>
+      <p class="fine" style="margin:0">The speech model (about 40 MB, downloaded once) runs on this phone. Your voice is never
+      uploaded or saved.</p>
+    </div>
+
+    <div class="verdict overall" id="stOverall">
+      <strong id="stOverallHead">Overall result</strong>
+      <p id="stOverallText">Do all three checks to see the overall result.</p>
+      <ul class="tally" id="stTally"></ul>
+      <div class="actions" id="stOverallActions" hidden><a class="filebtn callbtn" href="tel:108">Call 108</a><button class="quiet" id="stReset" type="button">Start over</button></div>
     </div>
 
     <section>
       <h2>About this check</h2>
       <p class="fine" style="margin:0">
-        Face, Arms, Speech, Time (FAST) is the stroke warning sign check used by ambulance services. Here the phone measures the
-        face (MediaPipe face landmarks, run on this phone) and the arms (motion sensor). The cut-offs are provisional and have not
-        been checked against patients. <b>A normal result does not rule out a stroke.</b> Nothing is uploaded or saved.
+        Face, Arms, Speech, Time (FAST) is the stroke warning sign check used by ambulance services: even one sign that
+        starts suddenly is treated as a possible stroke. Here the phone measures the face (MediaPipe face landmarks), the
+        arms (motion sensor) and speech (Whisper speech recognition and timing), all on this phone. The cut-offs are
+        provisional and have not been checked against patients. Only a hospital scan can confirm a stroke, and
+        <b>a result with no signs does not rule one out</b>. Nothing is uploaded or saved.
       </p>
     </section>
   </div>

@@ -35,7 +35,10 @@ against ECGs; only an ECG can confirm AFib.
 
 **Stroke check (FAST).** Face: the selfie camera and MediaPipe face landmarks (run on the phone) compare how much each
 mouth corner lifts in a smile. Arms: the phone, flat on the palm with eyes closed, measures how far each arm tilts in 10
-seconds. Speech: judged by the person helping. Any sign shows **call 108 now**; a normal result never rules out a stroke.
+seconds. Speech: the person says "You can't teach an old dog new tricks"; Whisper tiny (run in the browser with
+transformers.js, about 40 MB, cached) writes down what it heard, which is compared word by word with the sentence, and the
+recording's length and longest pause show slow or halting speech. Each step shows its own result, then an overall one:
+**Possible stroke: N of 3 signs found, call 108 now**, or **No stroke signs found** (which never rules out a stroke).
 
 **Sleep.** The phone plays 18–20 kHz tones and tracks the echo from the chest (`sonar.js`, after ApneaApp, MobiSys
 2015) to show breathing rate and count pauses of 10 seconds or more, per hour of tracking. Not a sleep study. "Try it

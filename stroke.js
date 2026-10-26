@@ -9,6 +9,12 @@
  * Comparing the smile with the relaxed face cancels out the ordinary
  * asymmetry everyone's face has.
  *
+ * Speech (the S in FAST): the person says a set sentence. The words are
+ * transcribed on the phone (Whisper tiny, run in the browser) and compared
+ * with the sentence, and the recording's timing shows slow or halting
+ * speech. Accents can lower the word score, so a low score asks for one
+ * more try before it counts.
+ *
  * Cut-offs are provisional: they have not been checked against patients.
  */
 (function (root, factory) {
@@ -56,5 +62,68 @@
     return { verdict: 'ok', liftRight: right, liftLeft: left, ratio, weaker, sign: ratio < WEAK_RATIO };
   }
 
-  return { EYE_RIGHT, EYE_LEFT, MOUTH_RIGHT, MOUTH_LEFT, MIN_SMILE, WEAK_RATIO, corners, droop };
+  // ---- Speech ----
+  const SENTENCE = 'You can\'t teach an old dog new tricks.';
+  const MIN_WORDS = 0.75;      // share of the sentence's words heard
+  const SLOW_S = 5, PAUSE_S = 1.2;
+
+  const words = (text) => text.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+  function editDistance(a, b) {
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  // A word counts if it matches, or is one letter off in a word of 4+ letters.
+  const same = (a, b) => a === b || (Math.min(a.length, b.length) >= 4 && editDistance(a, b) <= 1);
+
+  /** Share of the target sentence's words heard, in order (longest common subsequence). */
+  function wordMatch(heard, target = SENTENCE) {
+    const h = words(heard), t = words(target);
+    const L = Array.from({ length: t.length + 1 }, () => new Array(h.length + 1).fill(0));
+    for (let i = 1; i <= t.length; i++) for (let j = 1; j <= h.length; j++) {
+      L[i][j] = same(t[i - 1], h[j - 1]) ? L[i - 1][j - 1] + 1 : Math.max(L[i - 1][j], L[i][j - 1]);
+    }
+    return { matched: L[t.length][h.length], total: t.length, share: L[t.length][h.length] / t.length };
+  }
+
+  /**
+   * x: mono samples. Finds where speech starts and ends (20 ms frames well
+   * above the room's noise), its length, and the longest silence inside it.
+   */
+  function speechTiming(x, sampleRate) {
+    const frame = Math.round(sampleRate * 0.02), db = [];
+    for (let i = 0; i + frame <= x.length; i += frame) {
+      let e = 0;
+      for (let k = i; k < i + frame; k++) e += x[k] * x[k];
+      db.push(10 * Math.log10(e / frame + 1e-12));
+    }
+    if (!db.length) return { voiced: false, peakDb: -120 };
+    const sorted = [...db].sort((a, b) => a - b), floor = sorted[Math.floor(sorted.length * 0.1)], peakDb = sorted[sorted.length - 1];
+    const on = db.map((v) => v > Math.max(floor + 15, -55));
+    const first = on.indexOf(true), last = on.lastIndexOf(true);
+    if (first < 0 || peakDb < -50) return { voiced: false, peakDb };
+    let longest = 0, run = 0;
+    for (let i = first; i <= last; i++) { run = on[i] ? 0 : run + 1; longest = Math.max(longest, run); }
+    return { voiced: true, peakDb, startS: first * 0.02, durationS: (last - first + 1) * 0.02, longestPauseS: longest * 0.02 };
+  }
+
+  /** Combine the words heard and the timing into one speech result. */
+  function speechCheck({ timing, heard }) {
+    if (!timing.voiced) return { verdict: 'retake', code: 'silent', problem: 'No speech was heard. Hold the phone about 30 cm from the mouth and try again. If the person cannot speak at all, tap "Could not speak".' };
+    const reasons = [];
+    const match = heard == null ? null : wordMatch(heard);
+    if (match && match.share < MIN_WORDS) reasons.push(`only ${match.matched} of ${match.total} words came out right`);
+    if (timing.durationS > SLOW_S) reasons.push(`it took ${timing.durationS.toFixed(1)} s (usually 2–3 s)`);
+    if (timing.longestPauseS > PAUSE_S) reasons.push(`it stopped for ${timing.longestPauseS.toFixed(1)} s in the middle`);
+    return { verdict: 'ok', sign: reasons.length > 0, reasons, heard, match, ...timing };
+  }
+
+  return {
+    EYE_RIGHT, EYE_LEFT, MOUTH_RIGHT, MOUTH_LEFT, MIN_SMILE, WEAK_RATIO, corners, droop,
+    SENTENCE, MIN_WORDS, SLOW_S, PAUSE_S, words, wordMatch, speechTiming, speechCheck,
+  };
 });
