@@ -129,3 +129,15 @@ test('screening hint: clear dip, flat curve, in between, and one ear flatter tha
   const dip = Ear.analyzeEcho(recording({ ear: (x) => peaking(x, 3000, -10, 3) }), SR);
   assert.equal(Ear.earHint(dip.dip.depthDb).level, 'clear');
 });
+
+test('measurement reliability and agreement between repeat checks', () => {
+  const good = Ear.analyzeEcho(recording({ ear: (x) => peaking(x, 3000, -10, 3) }), SR);
+  assert.equal(Ear.reliability(good), 'high');
+  assert.equal(Ear.reliability({ ...good, snrDb: 12 }), 'fair');
+  assert.equal(Ear.reliability({ ...good, chirpsHeard: 7 }), 'fair');
+  const now = 1e9, min = 60 * 1000;
+  assert.equal(Ear.agreement('clear', [], now), 'single');
+  assert.equal(Ear.agreement('clear', [{ at: now - 5 * min, level: 'clear' }], now), 'confirmed');
+  assert.equal(Ear.agreement('flat', [{ at: now - 5 * min, level: 'clear' }], now), 'disagree');
+  assert.equal(Ear.agreement('clear', [{ at: now - 90 * min, level: 'clear' }], now), 'single', 'old checks do not count');
+});

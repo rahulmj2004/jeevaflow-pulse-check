@@ -112,6 +112,8 @@
   .verdict.flat { background: var(--bad-soft); border-color: var(--bad); }
   .verdict.flat strong { color: var(--bad); }
   .chip.bad { background: var(--bad-soft); color: var(--bad); }
+  .verdict .conf { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .instrument.example .big, .instrument.example .minor b { opacity: .4; }
 
   section h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 8px; }
   ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
@@ -313,6 +315,7 @@
   <div class="stack" id="earUi" hidden>
     <div class="instrument" aria-live="polite">
       <div class="verdict" id="earVerdict" hidden><strong id="earVerdictHead"></strong><p id="earVerdictText"></p>
+        <div class="conf" id="earVerdictConf"></div>
         <p class="fine">Screening hint, not a diagnosis. It is read from the dip depth (clear ≥ 5 dB, flat &lt; 2.5 dB).
         These cut-offs have not yet been checked against ears examined by a doctor, and the hint is only meaningful with the paper cone.</p></div>
       <div class="strip tall"><canvas id="echo" aria-label="Echo curve: loudness of the echo across frequencies"></canvas></div>
@@ -606,8 +609,9 @@
       `${Math.round(r.heartRate)} bpm from ${r.beats} beats · ${Math.round(r.spectralHeartRate)} bpm from the spectrum`,
     ]) { const s = document.createElement('span'); s.textContent = text; els.meta.append(s); }
     drawTrace(wave, r.peakIndexes.filter((p) => p >= start).map((p) => p - start));
-    els.chip.textContent = example ? 'Example reading' : 'Your reading';
-    els.chip.className = example ? 'chip' : 'chip good';
+    els.bpm.closest('.instrument').classList.toggle('example', example);
+    els.chip.textContent = example ? 'Example, not your reading' : 'Your reading';
+    els.chip.className = example ? 'chip warn' : 'chip good';
   }
 
   function showStress(r, example) {
@@ -1038,6 +1042,18 @@
       if (hint.level === 'clear') { box.className = 'verdict unclear'; $('earVerdictHead').textContent += ', but flatter than the other ear'; }
     }
     $('earVerdictText').textContent = text;
+
+    // How much to trust it: the measurement quality, and whether a repeat check agrees.
+    const conf = $('earVerdictConf'); conf.innerHTML = '';
+    const chip = (cls, t) => { const c = document.createElement('span'); c.className = `chip ${cls}`; c.textContent = t; conf.append(c); };
+    const quality = Ear.reliability(r);
+    chip(quality === 'high' ? 'good' : 'warn', quality === 'high' ? 'Measurement quality: high' : 'Measurement quality: fair');
+    const same = loadEar().filter((c) => c.ear === r.side)
+      .map((c) => ({ at: Date.parse(c.at), level: Ear.earHint(c.depthDb).level }));
+    const agree = Ear.agreement(hint.level, same, Date.now());
+    if (agree === 'confirmed') chip('good', 'Confirmed: 2 checks agree');
+    else if (agree === 'disagree') chip('warn', 'Checks disagree: do one more');
+    else chip('', 'Save, then check again to confirm');
   }
 
   function showEcho(r) {

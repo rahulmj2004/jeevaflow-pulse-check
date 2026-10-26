@@ -252,5 +252,26 @@
     return { level, flatterThanOther: gapDb != null && gapDb >= SIDE_GAP_DB, gapDb };
   }
 
-  return { F0, F1, CHIRP_MS, PERIOD_MS, COUNT, BAND, CLEAR_DIP_DB, FLAT_DIP_DB, SIDE_GAP_DB, chirp, fft, correlate, findChirps, deepestDip, analyzeEcho, earHint, micLevels, wav, sequence };
+  /**
+   * How trustworthy the measurement itself is (not the verdict): 'high'
+   * when nearly every chirp was heard, well above the room noise, and the
+   * chirps agreed closely; otherwise 'fair'.
+   */
+  function reliability({ chirpsHeard, expected, snrDb, consistencyDb }) {
+    return chirpsHeard >= expected - 1 && snrDb >= 20 && consistencyDb <= 1.5 ? 'high' : 'fair';
+  }
+
+  /**
+   * Whether repeated checks of the same ear back this one up: 'confirmed'
+   * when an earlier check (within `withinMs`) reached the same hint level,
+   * 'disagree' when the earlier ones all differ, 'single' when there is
+   * none. `earlier` is [{ at: ms, level }].
+   */
+  function agreement(level, earlier, now, withinMs = 30 * 60 * 1000) {
+    const recent = earlier.filter((c) => now - c.at <= withinMs);
+    if (!recent.length) return 'single';
+    return recent.some((c) => c.level === level) ? 'confirmed' : 'disagree';
+  }
+
+  return { F0, F1, CHIRP_MS, PERIOD_MS, COUNT, BAND, CLEAR_DIP_DB, FLAT_DIP_DB, SIDE_GAP_DB, chirp, fft, correlate, findChirps, deepestDip, analyzeEcho, earHint, reliability, agreement, micLevels, wav, sequence };
 });
