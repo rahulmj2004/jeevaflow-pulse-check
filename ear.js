@@ -237,5 +237,20 @@
     return out;
   }
 
-  return { F0, F1, CHIRP_MS, PERIOD_MS, COUNT, BAND, chirp, fft, correlate, findChirps, deepestDip, analyzeEcho, micLevels, wav, sequence };
+  /**
+   * Screening hint from the dip depth. A healthy eardrum absorbs sound and
+   * leaves a clear dip; fluid stiffens it and flattens the curve (Chan et
+   * al., Sci Transl Med 2019). These cut-offs are provisional: they have
+   * not been checked against ears examined by a doctor, and must be
+   * replaced once that data exists. `otherDepthDb` is the latest check of
+   * the opposite ear on this phone, if any.
+   */
+  const CLEAR_DIP_DB = 5, FLAT_DIP_DB = 2.5, SIDE_GAP_DB = 4;
+  function earHint(depthDb, otherDepthDb = null) {
+    const level = depthDb >= CLEAR_DIP_DB ? 'clear' : depthDb < FLAT_DIP_DB ? 'flat' : 'unclear';
+    const gapDb = otherDepthDb == null ? null : otherDepthDb - depthDb;
+    return { level, flatterThanOther: gapDb != null && gapDb >= SIDE_GAP_DB, gapDb };
+  }
+
+  return { F0, F1, CHIRP_MS, PERIOD_MS, COUNT, BAND, CLEAR_DIP_DB, FLAT_DIP_DB, SIDE_GAP_DB, chirp, fft, correlate, findChirps, deepestDip, analyzeEcho, earHint, micLevels, wav, sequence };
 });

@@ -115,3 +115,17 @@ test('the playback sequence and its WAV file contain the chirps', () => {
   for (let i = 0; i < seq.length; i++) back[i] = view.getInt16(44 + i * 2, true) / 32767;
   assert.equal(Ear.analyzeEcho(back, SR).verdict, 'ok');
 });
+
+test('screening hint: clear dip, flat curve, in between, and one ear flatter than the other', () => {
+  assert.equal(Ear.earHint(8).level, 'clear');
+  assert.equal(Ear.earHint(1).level, 'flat');
+  assert.equal(Ear.earHint(3.5).level, 'unclear');
+  assert.equal(Ear.earHint(8).flatterThanOther, false, 'no other ear saved');
+  assert.equal(Ear.earHint(2, 9).flatterThanOther, true);
+  assert.equal(Ear.earHint(7, 9).flatterThanOther, false);
+  // A real flat recording lands in "flat", a notched one in "clear".
+  const flat = Ear.analyzeEcho(recording({}), SR);
+  assert.equal(Ear.earHint(flat.dip.depthDb).level, 'flat');
+  const dip = Ear.analyzeEcho(recording({ ear: (x) => peaking(x, 3000, -10, 3) }), SR);
+  assert.equal(Ear.earHint(dip.dip.depthDb).level, 'clear');
+});

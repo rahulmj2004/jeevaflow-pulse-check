@@ -19,8 +19,10 @@ or "lower" than usual. HRV differs too much between people for a fixed threshold
 
 **Ear echo.** Print the paper cone from the page, tape it over the phone's speaker and microphone, rest the tip at
 the opening of the ear (never push it in) and play 5 seconds of soft chirps. The page shows the echo curve and its
-deepest dip, and can compare left and right ears or the same ear over time. It does **not** say whether there is fluid
-behind the eardrum: that needs a threshold learned from doctor-checked ears. Works best in Chrome on Android.
+deepest dip, and highlights a provisional result: **Looks normal** (dip ≥ 5 dB, green), **Unclear** (amber) or
+**Flat echo: possible fluid** (dip < 2.5 dB, red), and points out an ear much flatter than the other. These cut-offs
+have **not** been calibrated against doctor-checked ears, so the result is a screening hint, not a diagnosis. The paper
+cone is required: without it the curve comes out flat. Works best in Chrome on Android.
 
 ## How it works
 

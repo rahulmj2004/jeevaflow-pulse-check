@@ -22,6 +22,9 @@
     --good: #1d7a46;
     --warn: #a35b00;
     --warn-soft: #fbf0e0;
+    --good-soft: #e3f3e9;
+    --bad: #b3261e;
+    --bad-soft: #fbe7e5;
     --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
     --font-read: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }
@@ -29,13 +32,15 @@
     :root:not([data-theme="light"]) {
       --paper: #0f1719; --surface: #152125; --ink: #e7eeed; --muted: #9db0b2; --line: #26363a;
       --grid-minor: #1d2a2d; --grid-major: #2f4246; --trace: #ff6b7d; --accent: #5cc3c9; --accent-ink: #0c1f22;
-      --accent-soft: #173438; --good: #5fd18f; --warn: #f2b45a; --warn-soft: #2e2617; color-scheme: dark;
+      --accent-soft: #173438; --good: #5fd18f; --warn: #f2b45a; --warn-soft: #2e2617;
+      --good-soft: #15301f; --bad: #ff8a80; --bad-soft: #3a1c1a; color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --paper: #0f1719; --surface: #152125; --ink: #e7eeed; --muted: #9db0b2; --line: #26363a;
     --grid-minor: #1d2a2d; --grid-major: #2f4246; --trace: #ff6b7d; --accent: #5cc3c9; --accent-ink: #0c1f22;
-    --accent-soft: #173438; --good: #5fd18f; --warn: #f2b45a; --warn-soft: #2e2617; color-scheme: dark;
+    --accent-soft: #173438; --good: #5fd18f; --warn: #f2b45a; --warn-soft: #2e2617;
+      --good-soft: #15301f; --bad: #ff8a80; --bad-soft: #3a1c1a; color-scheme: dark;
   }
 
   body {
@@ -96,6 +101,17 @@
 
   .notice { border-radius: 10px; padding: 12px 14px; background: var(--warn-soft); color: var(--ink); font-size: 15px; }
   .notice b { color: var(--warn); }
+  .verdict { border-radius: 12px; padding: 14px 16px; border-left: 6px solid var(--muted); background: var(--paper); }
+  .verdict strong { display: block; font-size: 22px; line-height: 1.2; }
+  .verdict p { margin: 6px 0 0; font-size: 15px; }
+  .verdict .fine { margin-top: 8px; }
+  .verdict.clear { background: var(--good-soft); border-color: var(--good); }
+  .verdict.clear strong { color: var(--good); }
+  .verdict.unclear { background: var(--warn-soft); border-color: var(--warn); }
+  .verdict.unclear strong { color: var(--warn); }
+  .verdict.flat { background: var(--bad-soft); border-color: var(--bad); }
+  .verdict.flat strong { color: var(--bad); }
+  .chip.bad { background: var(--bad-soft); color: var(--bad); }
 
   section h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 8px; }
   ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
@@ -281,6 +297,9 @@
 
   <div class="stack" id="earUi" hidden>
     <div class="instrument" aria-live="polite">
+      <div class="verdict" id="earVerdict" hidden><strong id="earVerdictHead"></strong><p id="earVerdictText"></p>
+        <p class="fine">Screening hint, not a diagnosis. It is read from the dip depth (clear ≥ 5 dB, flat &lt; 2.5 dB).
+        These cut-offs have not yet been checked against ears examined by a doctor, and the hint is only meaningful with the paper cone.</p></div>
       <div class="strip tall"><canvas id="echo" aria-label="Echo curve: loudness of the echo across frequencies"></canvas></div>
       <div class="readout">
         <div class="bpm">
@@ -324,6 +343,9 @@
     <section class="two">
       <div>
         <h2>Make the cone</h2>
+        <p class="fine" style="margin:0 0 8px"><b>The cone is needed.</b> Without it the chirps spread into the room and the
+          tiny echo from the eardrum is drowned out by the direct sound and by echoes from the face and walls, so the curve
+          comes out flat and would look like fluid.</p>
         <ol class="steps">
           <li>Download the cone and print it at 100% size. The scale bar should measure 5 cm.</li>
           <li>Cut it out and roll it so the narrow end is about 8 mm across. Tape it along the glue tab.</li>
@@ -348,8 +370,9 @@
         <i>Science Translational Medicine</i>, 2019).
       </p>
       <p class="fine" style="margin:0">
-        This page has <b>not</b> been calibrated against ears checked by a doctor, so it shows the curve but does not say
-        whether there is fluid. It is most useful for comparing the two ears, or the same ear over days, on the same
+        The coloured result is a <b>provisional</b> reading of the dip: a clear dip shows green, a flat curve red, and one ear
+        much flatter than the other is pointed out. The cut-offs have <b>not</b> yet been calibrated against ears checked by a
+        doctor, so a green result does not rule out an infection. The curve is most useful for comparing the two ears, or the same ear over days, on the same
         phone. Curves from different phones cannot be compared. Works best in Chrome on Android; on some iPhones the
         sound may come from the top earpiece while the microphone is on, and the chirps may not be heard.
       </p>
@@ -366,7 +389,7 @@
         <button class="quiet" id="earClearNo" type="button">Keep</button>
       </div>
       <table id="earHistory" hidden>
-        <thead><tr><th>When</th><th>Ear</th><th>Dip at</th><th>Depth</th></tr></thead>
+        <thead><tr><th>When</th><th>Ear</th><th>Dip at</th><th>Depth</th><th>Result</th></tr></thead>
         <tbody></tbody>
       </table>
       <p class="fine" id="earNoHistory">No ear checks yet. Saved checks stay in this browser only.</p>
@@ -909,7 +932,31 @@
     }
   }
 
+  const HINT = {
+    clear: { short: 'Normal', head: 'Looks normal', text: 'The eardrum absorbed sound and left a clear dip, as a healthy eardrum moving freely does.' },
+    unclear: { short: 'Unclear', head: 'Unclear: check again', text: 'The dip is shallow. Check again with the cone resting steadily at the ear opening; if it stays shallow, compare with the other ear.' },
+    flat: { short: 'Flat', head: 'Flat echo: possible fluid', text: 'The curve has almost no dip, as happens when fluid behind the eardrum stops it moving. Please have the ear checked by a doctor, especially if there is pain or fever.' },
+  };
+
+  /** Coloured result for this check, compared with the latest saved check of the other ear. */
+  function showVerdict(r) {
+    const box = $('earVerdict');
+    box.hidden = r.verdict !== 'ok';
+    if (box.hidden) return;
+    const other = loadEar().find((c) => c.ear !== r.side);
+    const hint = Ear.earHint(r.dip.depthDb, other ? other.depthDb : null);
+    box.className = `verdict ${hint.level}`;
+    $('earVerdictHead').textContent = `${r.side === 'left' ? 'Left' : 'Right'} ear · ${HINT[hint.level].head}`;
+    let text = HINT[hint.level].text;
+    if (hint.flatterThanOther) {
+      text += ` This ear's dip is ${hint.gapDb.toFixed(1)} dB shallower than the ${other.ear} ear's last check, which is worth showing a doctor.`;
+      if (hint.level === 'clear') { box.className = 'verdict unclear'; $('earVerdictHead').textContent += ', but flatter than the other ear'; }
+    }
+    $('earVerdictText').textContent = text;
+  }
+
   function showEcho(r) {
+    showVerdict(r);
     $('chirps').textContent = `${r.chirpsHeard}/${r.expected}`;
     $('snr').innerHTML = r.snrDb == null ? '--<span>dB</span>' : `${Math.round(r.snrDb)}<span>dB</span>`;
     const meta = $('earMeta'); meta.innerHTML = '';
@@ -945,6 +992,7 @@
   ];
 
   async function startEar() {
+    $('earVerdict').hidden = true;
     earNotice('');
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1087,6 +1135,10 @@
       const cells = [[when, false], [r.ear === 'left' ? 'Left' : 'Right', false],
         [r.depthDb >= 1 ? `${(r.dipHz / 1000).toFixed(2)} kHz` : '--', true], [`${r.depthDb.toFixed(1)} dB`, true]];
       for (const [text, num] of cells) { const td = document.createElement('td'); td.textContent = text; if (num) td.className = 'num'; tr.append(td); }
+      const level = Ear.earHint(r.depthDb).level, chip = document.createElement('span');
+      chip.className = `chip ${{ clear: 'good', unclear: 'warn', flat: 'bad' }[level]}`;
+      chip.textContent = HINT[level].short;
+      const td = document.createElement('td'); td.append(chip); tr.append(td);
       body.append(tr);
     }
     table.hidden = !list.length;
