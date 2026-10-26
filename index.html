@@ -115,6 +115,21 @@
 
   section h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 6px 0 8px; }
   ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+  .howto { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 0; }
+  .howto figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+  .howto figcaption { font-weight: 700; font-size: 15px; margin-bottom: 6px; }
+  .howto svg { display: block; width: 100%; height: auto; }
+  .ill { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+  .ill .paper { fill: var(--paper); }
+  .ill .phone { fill: var(--accent-soft); stroke: var(--accent); }
+  .ill .screen { fill: var(--surface); stroke: var(--accent); stroke-width: 1; }
+  .ill .tape { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1; }
+  .ill .hole { fill: var(--ink); stroke: none; }
+  .ill .lead { stroke: var(--muted); stroke-width: 1; }
+  .ill .edge { stroke: var(--trace); stroke-width: 2; stroke-dasharray: 5 4; }
+  .ill .arrow { stroke: var(--accent); stroke-width: 2; }
+  .ill text { fill: var(--ink); stroke: none; font: 11px var(--font-body); }
+  .ill text.em { fill: var(--trace); font-weight: 700; }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .two > div { min-width: 0; }
   .fine { font-size: 14px; color: var(--muted); }
@@ -340,6 +355,76 @@
       </div>
     </div>
 
+    <section aria-labelledby="coneHowHead">
+      <h2 id="coneHowHead">How to put the cone on the phone</h2>
+      <div class="howto">
+        <figure>
+          <figcaption>1 · Cut and roll</figcaption>
+          <svg class="ill" viewBox="0 0 200 220" role="img" aria-label="The printed paper fan is rolled into a cone with a narrow 8 millimetre tip">
+            <path class="paper" d="M 108.66 25 L 169.28 60 A 80 80 0 0 1 30.72 60 L 91.34 25 A 10 10 0 0 0 108.66 25 Z"/>
+            <text x="100" y="72" text-anchor="middle">printed shape</text>
+            <path class="arrow" d="M 100 108 V 128 M 93 121 L 100 128 L 107 121"/>
+            <text x="110" y="122">roll &amp; tape</text>
+            <path class="paper" d="M 66 142 L 97 205 L 103 205 L 134 142"/>
+            <ellipse class="paper" cx="100" cy="142" rx="34" ry="7"/>
+            <text x="140" y="146">wide end</text>
+            <path class="lead" d="M 106 205 L 128 205"/>
+            <text x="131" y="209">8 mm tip</text>
+          </svg>
+        </figure>
+        <figure>
+          <figcaption>2 · Tape it on the bottom edge</figcaption>
+          <svg class="ill" viewBox="0 0 200 220" role="img" aria-label="The wide end of the cone is taped over the bottom edge of the phone, the tip pointing away from the phone">
+            <rect class="phone" x="55" y="8" width="90" height="132" rx="12"/>
+            <rect class="screen" x="62" y="18" width="76" height="108" rx="4"/>
+            <text x="100" y="76" text-anchor="middle">screen</text>
+            <path class="paper" d="M 55 140 L 145 140 L 103 208 L 97 208 Z"/>
+            <rect class="tape" x="44" y="130" width="26" height="18" rx="2" transform="rotate(-18 57 139)"/>
+            <rect class="tape" x="130" y="130" width="26" height="18" rx="2" transform="rotate(18 143 139)"/>
+            <path class="lead" d="M 154 140 L 170 150"/><text x="160" y="162">tape</text>
+            <path class="lead" d="M 104 200 L 124 200"/><text x="127" y="204">tip → ear</text>
+            <path class="lead" d="M 42 132 L 55 140"/><text x="6" y="116">bottom</text><text x="6" y="129">edge</text>
+          </svg>
+        </figure>
+        <figure>
+          <figcaption>Look at the bottom edge</figcaption>
+          <svg class="ill" viewBox="0 0 200 220" role="img" aria-label="Seen from below, the microphone hole and the speaker grille must both be inside the cone's opening">
+            <text x="100" y="22" text-anchor="middle">phone seen from below</text>
+            <rect class="phone" x="20" y="96" width="160" height="22" rx="11"/>
+            <circle class="hole" cx="48" cy="107" r="2.5"/>
+            <rect class="hole" x="88" y="103" width="24" height="8" rx="4"/>
+            <circle class="hole" cx="132" cy="107" r="1.8"/><circle class="hole" cx="139" cy="107" r="1.8"/>
+            <circle class="hole" cx="146" cy="107" r="1.8"/><circle class="hole" cx="153" cy="107" r="1.8"/><circle class="hole" cx="160" cy="107" r="1.8"/>
+            <path class="lead" d="M 48 103 L 40 62"/><text x="16" y="56">microphone</text>
+            <path class="lead" d="M 100 103 L 100 76"/><text x="100" y="70" text-anchor="middle">port</text>
+            <path class="lead" d="M 146 103 L 154 62"/><text x="134" y="56">speaker</text>
+            <ellipse class="edge" cx="100" cy="107" rx="90" ry="26"/>
+            <text class="em" x="100" y="152" text-anchor="middle">cone opening: both holes inside</text>
+            <text x="100" y="172" text-anchor="middle">Seal the gaps with tape.</text>
+            <text x="100" y="188" text-anchor="middle">Your phone may have the holes</text>
+            <text x="100" y="202" text-anchor="middle">the other way round. Cover both.</text>
+          </svg>
+        </figure>
+        <figure>
+          <figcaption>3 · Rest the tip at the ear</figcaption>
+          <svg class="ill" viewBox="0 0 200 220" role="img" aria-label="The phone is held sideways with the cone tip resting at the opening of the ear canal, not pushed in">
+            <rect class="phone" x="4" y="92" width="96" height="46" rx="8"/>
+            <rect class="screen" x="12" y="98" width="80" height="34" rx="3"/>
+            <path class="paper" d="M 100 92 L 100 138 L 158 117 L 158 113 Z"/>
+            <rect class="tape" x="94" y="86" width="12" height="10" rx="2"/>
+            <rect class="tape" x="94" y="134" width="12" height="10" rx="2"/>
+            <path d="M 176 58 C 206 58 214 96 203 120 C 196 136 199 160 180 166 C 170 169 165 160 170 151"/>
+            <path d="M 181 80 C 196 84 198 104 189 114 C 183 120 185 132 178 138"/>
+            <ellipse class="hole" cx="166" cy="115" rx="4" ry="6"/>
+            <path class="lead" d="M 166 124 L 150 176"/>
+            <text class="em" x="80" y="188">rest it here</text>
+            <text class="em" x="80" y="202">never push it in</text>
+            <text x="150" y="44">ear</text>
+          </svg>
+        </figure>
+      </div>
+    </section>
+
     <section class="two">
       <div>
         <h2>Make the cone</h2>
@@ -349,7 +434,7 @@
         <ol class="steps">
           <li>Download the cone and print it at 100% size. The scale bar should measure 5 cm.</li>
           <li>Cut it out and roll it so the narrow end is about 8 mm across. Tape it along the glue tab.</li>
-          <li>Tape the wide end over the bottom edge of the phone so it covers both the speaker and the microphone.</li>
+          <li>Squeeze the wide end flat over the bottom edge of the phone so it covers both the speaker and the microphone, and tape it to the front and back with no gaps.</li>
         </ol>
       </div>
       <div>
