@@ -44,6 +44,12 @@ recording's length and longest pause show slow or halting speech. Each step show
 2015) to show breathing rate and count pauses of 10 seconds or more, per hour of tracking. Not a sleep study. "Try it
 awake" runs a 90-second demo: breathe, hold your breath for 15 seconds, and watch it find the pause.
 
+**Heart sounds (Dhadkan, test version).** Press the phone's bottom edge (microphone) on bare skin left of the breastbone
+and record 20 seconds. `heart.js` keeps the 25–150 Hz band where the "lub" and "dub" are, finds the rhythm of its
+loudness, and shows the heart rate and how clearly a heartbeat was heard; it checks whether a phone can record heart
+sounds at all. It does not detect murmurs. The recording can be played back (a speaker-friendly version follows the
+recorded beats) or downloaded.
+
 All new cut-offs are provisional, and nothing is uploaded: sound, video and motion are processed on the phone.
 
 ## How it works
@@ -78,7 +84,7 @@ storage and can be deleted on the page.
 ## Tests
 
 ```bash
-node --test ppg.test.js ear.test.js motion.test.js stroke.test.js sonar.test.js
+node --test ppg.test.js ear.test.js motion.test.js stroke.test.js sonar.test.js heart.test.js
 ```
 
 Synthetic pulses at 50–130 bpm are measured within ±2 bpm; noise, motion, an uncovered camera and short recordings

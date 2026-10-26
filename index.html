@@ -228,6 +228,7 @@
     <button type="button" role="tab" id="tabTremor" aria-selected="false">Tremor</button>
     <button type="button" role="tab" id="tabStroke" aria-selected="false">Stroke check</button>
     <button type="button" role="tab" id="tabSleep" aria-selected="false">Sleep</button>
+    <button type="button" role="tab" id="tabHeart" aria-selected="false">Heart sounds</button>
   </div>
 
   <div class="stack" id="pulseUi">
@@ -729,6 +730,68 @@
     <div class="dim" id="slDim" hidden>Tracking breathing · tap to wake</div>
   </div>
 
+  <div class="stack" id="heartUi" hidden>
+    <div class="verdict" style="border-color:var(--accent)">
+      <strong>Dhadkan · test version</strong>
+      <p>This checks whether your phone's microphone can hear your heart. It shows the heartbeat and measures your heart
+      rate from the sound. It does <b>not</b> check for murmurs or heart disease yet.</p>
+    </div>
+    <div class="instrument" aria-live="polite">
+      <div class="verdict" id="hsVerdict" hidden><strong id="hsHead"></strong><p id="hsText"></p></div>
+      <div class="strip tall"><canvas id="hsTrace" aria-label="Heart sound wave"></canvas><span class="scale" id="hsScale">heart sounds · last 4 s</span></div>
+      <div class="readout">
+        <div class="bpm">
+          <div class="label">Heart rate from sound</div>
+          <div class="big"><span id="hsBpm">--</span><small>bpm</small></div>
+        </div>
+        <div class="minor">
+          <div><span class="label">Heartbeat clarity</span><b id="hsClarity">--</b></div>
+          <div><span class="label">Heart-band level</span><b id="hsBass">--<span>dB</span></b></div>
+          <div><span class="label">Beats heard</span><b id="hsBeats">--</b></div>
+        </div>
+      </div>
+      <div class="meta" id="hsMeta"><span>Not recorded yet</span></div>
+    </div>
+    <div class="panel">
+      <div class="status" id="hsStatus">Press the phone on your chest and record 20 seconds of heartbeat.</div>
+      <div class="progress" id="hsProgressWrap" hidden><i id="hsProgress"></i></div>
+      <div class="notice" id="hsNotice" hidden></div>
+      <div class="actions" id="hsActions">
+        <button class="primary" id="hsStart" type="button">Start recording</button>
+      </div>
+      <div class="actions" id="hsRunActions" hidden>
+        <button class="quiet" id="hsStop" type="button">Stop</button>
+      </div>
+      <div class="actions" id="hsResultActions" hidden>
+        <button class="primary" id="hsPlayBoost" type="button">Play heartbeat (speaker)</button>
+        <button id="hsPlayReal" type="button">Play real sound (earphones)</button>
+        <a class="filebtn" id="hsDownload" download="dhadkan-heart-sound.wav" href="#">Download recording</a>
+        <button class="quiet" id="hsAgain" type="button">Record again</button>
+      </div>
+    </div>
+    <section class="two">
+      <div>
+        <h2>How to record</h2>
+        <ol class="steps">
+          <li>Go to a quiet room. Turn off fans and the TV. Take the phone out of its case.</li>
+          <li>Find the microphone: the small hole on the bottom edge of the phone.</li>
+          <li>Lift your shirt. Press that bottom edge <b>firmly on bare skin</b>, just left of the breastbone, between the ribs (below the left nipple works well).</li>
+          <li>Tap Start, then <b>stay completely silent and still</b>. Breathe gently; holding your breath for a few seconds makes it clearer.</li>
+        </ol>
+      </div>
+      <div>
+        <h2>How it works</h2>
+        <p class="fine" style="margin:0">
+          Each heartbeat closes the heart's valves twice, making two low thuds, "lub" and "dub". They make the chest wall
+          vibrate, and a microphone pressed on the skin records that vibration. The page keeps only the low sounds where the
+          heart is (25–150 Hz), draws them, and finds the rhythm. Phone speakers cannot play such deep sounds, so
+          <b>Play heartbeat (speaker)</b> plays a higher tone that follows your recording's beats; use earphones for the real
+          sound. The recording stays on this phone unless you download it.
+        </p>
+      </div>
+    </section>
+  </div>
+
   <section class="research" aria-labelledby="researchHead">
     <h2 id="researchHead">Research preview: not measured here</h2>
     <p class="fine" style="margin:0">
@@ -773,6 +836,7 @@
 <script src="motion.js"></script>
 <script src="sonar.js"></script>
 <script src="stroke.js"></script>
+<script src="heart.js"></script>
 <script src="features.js"></script>
 <script>
 (() => {
@@ -877,7 +941,7 @@
   }
 
   // ------------------------------------------------------------------ ui
-  const TABS = { finger: 'tabFinger', face: 'tabFace', ear: 'tabEar', tremor: 'tabTremor', stroke: 'tabStroke', sleep: 'tabSleep' };
+  const TABS = { finger: 'tabFinger', face: 'tabFace', ear: 'tabEar', tremor: 'tabTremor', stroke: 'tabStroke', sleep: 'tabSleep', heart: 'tabHeart' };
   function setMode(next) {
     if (run || earRun || window.Features.busy() || mode === next) return;
     mode = next;
@@ -1608,6 +1672,7 @@
   $('tabTremor').addEventListener('click', () => setMode('tremor'));
   $('tabStroke').addEventListener('click', () => setMode('stroke'));
   $('tabSleep').addEventListener('click', () => setMode('sleep'));
+  $('tabHeart').addEventListener('click', () => setMode('heart'));
   $('videoInput').addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';

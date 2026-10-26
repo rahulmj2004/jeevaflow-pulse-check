@@ -706,14 +706,155 @@
   $('slClear').addEventListener('click', () => { if (confirm('Delete every night saved in this browser?')) { store(SL_KEY, []); slRender(); } });
 
   // =====================================================================
+  // Heart sounds (Dhadkan)
+  // =====================================================================
+  const hs = { run: null, last: null, url: null };
+
+  async function hsStart() {
+    setNotice($('hsNotice'), '');
+    $('hsVerdict').hidden = true;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx || !navigator.mediaDevices) { setNotice($('hsNotice'), 'This browser cannot record sound here. Use Chrome or Safari.'); return; }
+    let stream;
+    try {
+      // Voice processing would remove the low heart sounds, so turn it all off.
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    } catch (e) {
+      setNotice($('hsNotice'), e && e.name === 'NotAllowedError' ? 'Microphone permission was not given.' : 'Could not open the microphone.');
+      return;
+    }
+    const ctx = new Ctx(); await ctx.resume();
+    const rate = ctx.sampleRate, filter = Heart.createFilter(rate);
+    const src = ctx.createMediaStreamSource(stream), proc = ctx.createScriptProcessor(4096, 1, 1), mute = ctx.createGain();
+    mute.gain.value = 0;
+    const chunks = [], show = [], keep = Math.round(4 * filter.rate);
+    proc.onaudioprocess = (e) => {
+      const x = e.inputBuffer.getChannelData(0);
+      chunks.push(new Float32Array(x));
+      for (const v of filter.push(x)) { show.push(v); }
+      if (show.length > keep) show.splice(0, show.length - keep);
+    };
+    src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+    let cancelled = false;
+    hs.run = { cancel() { cancelled = true; } };
+    $('hsActions').hidden = true; $('hsRunActions').hidden = false; $('hsResultActions').hidden = true; $('hsProgressWrap').hidden = false;
+    $('hsBpm').textContent = '--'; $('hsClarity').textContent = '--'; $('hsBeats').textContent = '--';
+    keepAwake(true);
+    const draw = () => { if (hs.run) { plot($('hsTrace'), show); requestAnimationFrame(draw); } };
+    requestAnimationFrame(draw);
+
+    const t0 = performance.now(), total = 20000;
+    let lastLive = 0;
+    while (!cancelled && performance.now() - t0 < total) {
+      await wait(250);
+      const ms = performance.now() - t0;
+      $('hsProgress').style.width = `${ms / total * 100}%`;
+      const level = show.length ? 20 * Math.log10(Math.sqrt(show.reduce((a, v) => a + v * v, 0) / show.length) + 1e-9) : -120;
+      $('hsBass').innerHTML = `${Math.round(level)}<span>dB</span>`;
+      $('hsStatus').textContent = `Recording… stay silent and still, ${Math.ceil((total - ms) / 1000)} s`;
+      // A live reading every 2 s once there is enough sound.
+      if (ms > 9000 && ms - lastLive > 2000) {
+        lastLive = ms;
+        const all = joined(chunks), r = Heart.analyze(all.subarray(Math.max(0, all.length - 10 * rate)), rate);
+        $('hsBpm').textContent = r.verdict === 'ok' ? Math.round(r.heartRate) : '--';
+        $('hsClarity').textContent = `${Math.round((r.clarity || 0) * 100)}%`;
+      }
+    }
+    proc.disconnect(); src.disconnect(); stream.getTracks().forEach((t) => t.stop()); ctx.close();
+    hs.run = null; keepAwake(false);
+    $('hsRunActions').hidden = true; $('hsProgressWrap').hidden = true; $('hsProgress').style.width = '0%';
+    if (cancelled) { $('hsActions').hidden = false; $('hsStatus').textContent = 'Stopped.'; return; }
+
+    const all = joined(chunks);
+    const r = Heart.analyze(all, rate);
+    hs.last = { r, raw: all, rate };
+    hsShow(r);
+    if (hs.url) URL.revokeObjectURL(hs.url);
+    hs.url = URL.createObjectURL(new Blob([Heart.wav(all, rate)], { type: 'audio/wav' }));
+    $('hsDownload').href = hs.url;
+    $('hsResultActions').hidden = false;
+    $('hsPlayBoost').disabled = r.verdict !== 'ok' && !r.envelope;
+  }
+
+  function joined(chunks) {
+    const out = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
+    let at = 0; for (const c of chunks) { out.set(c, at); at += c.length; }
+    return out;
+  }
+
+  function hsShow(r) {
+    const box = $('hsVerdict'); box.hidden = false;
+    $('hsMeta').innerHTML = '';
+    const meta = (t) => { const s2 = document.createElement('span'); s2.textContent = t; $('hsMeta').append(s2); };
+    $('hsBass').innerHTML = r.bassDb == null ? '--<span>dB</span>' : `${Math.round(r.bassDb)}<span>dB</span>`;
+    $('hsClarity').textContent = r.clarity == null ? '--' : `${Math.round(r.clarity * 100)}%`;
+    if (r.verdict === 'ok') {
+      const strong = r.clarity >= 0.6;
+      box.className = `verdict ${strong ? 'clear' : 'unclear'}`;
+      $('hsHead').textContent = strong ? 'Your phone can hear your heart' : 'Heartbeat heard, but faint';
+      $('hsText').textContent = strong
+        ? `A clear, steady heartbeat at about ${Math.round(r.heartRate)} beats per minute. This phone works for heart sounds.`
+        : `A heartbeat at about ${Math.round(r.heartRate)} beats per minute, but not very clear. Press more firmly on bare skin in a quieter room and try again.`;
+      $('hsBpm').textContent = Math.round(r.heartRate);
+      $('hsBeats').textContent = String(r.beats.length);
+      $('hsStatus').textContent = 'Done. Play it back, or check the number against a pulse reading.';
+      // The beats, drawn over the last 6 seconds of the recording.
+      const n = Math.round(6 * r.rate), y = Array.from(r.filtered.subarray(Math.max(0, r.filtered.length - n)));
+      const t0 = (r.filtered.length - y.length) / r.rate;
+      plot($('hsTrace'), y, { marks: r.beats.filter((b) => b >= t0).map((b) => [(b - t0) * r.rate - 0.02 * r.rate, (b - t0) * r.rate + 0.02 * r.rate]) });
+      $('hsScale').textContent = 'heart sounds · last 6 s · shaded = beats found';
+    } else {
+      box.className = 'verdict flat';
+      $('hsHead').textContent = r.code === 'short' ? 'Too short' : 'No clear heartbeat heard';
+      $('hsText').textContent = r.problem;
+      $('hsBpm').textContent = '--'; $('hsBeats').textContent = '--';
+      $('hsStatus').textContent = 'Try again, or download the recording so it can be checked.';
+      if (r.filtered) plot($('hsTrace'), Array.from(r.filtered.subarray(Math.max(0, r.filtered.length - Math.round(6 * r.rate)))));
+    }
+    if (r.seconds) meta(`${Math.round(r.seconds)} s recorded`);
+    if (r.bassDb != null) meta(`Heart-band level ${Math.round(r.bassDb)} dB of ${Math.round(r.fullDb)} dB total`);
+  }
+
+  async function hsPlay(boosted) {
+    if (!hs.last) return;
+    const { r, raw, rate } = hs.last;
+    const Ctx = window.AudioContext || window.webkitAudioContext, ctx = new Ctx();
+    let data, sr;
+    if (boosted) {
+      data = Heart.audible(r.envelope || Heart.envelope(Heart.filterAll(raw, rate).y, Heart.RATE), raw.length / rate, 22050); sr = 22050;
+    } else {
+      // The heart band at the original rate, made louder.
+      const f = Heart.createFilter(rate), y = f.push(raw), up = Math.round(rate / f.rate);
+      data = new Float32Array(y.length * up);
+      for (let i = 0; i < y.length; i++) data.fill(y[i], i * up, (i + 1) * up);
+      sr = f.rate * up;
+    }
+    let peak = 0; for (const v of data) peak = Math.max(peak, Math.abs(v));
+    const gain = peak ? 0.9 / peak : 1;
+    const buf = ctx.createBuffer(1, data.length, sr), ch = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) ch[i] = data[i] * gain;
+    const node = ctx.createBufferSource(); node.buffer = buf; node.connect(ctx.destination);
+    node.onended = () => ctx.close();
+    node.start();
+  }
+
+  $('hsStart').addEventListener('click', hsStart);
+  $('hsStop').addEventListener('click', () => hs.run && hs.run.cancel());
+  $('hsPlayBoost').addEventListener('click', () => hsPlay(true));
+  $('hsPlayReal').addEventListener('click', () => hsPlay(false));
+  $('hsAgain').addEventListener('click', () => { $('hsResultActions').hidden = true; $('hsActions').hidden = false; $('hsVerdict').hidden = true; });
+
+  // =====================================================================
   window.Features = {
-    busy: () => !!(tr.run || st.run || sl.run),
+    busy: () => !!(tr.run || st.run || sl.run || hs.run),
     show(mode) {
       $('tremorUi').hidden = mode !== 'tremor';
       $('strokeUi').hidden = mode !== 'stroke';
       $('sleepUi').hidden = mode !== 'sleep';
+      $('heartUi').hidden = mode !== 'heart';
       if (mode === 'tremor') plot($('trTrace'), []);
       if (mode === 'sleep') plot($('slTrace'), []);
+      if (mode === 'heart') plot($('hsTrace'), []);
     },
   };
   trRender();
